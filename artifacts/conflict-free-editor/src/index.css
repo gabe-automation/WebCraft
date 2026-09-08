@@ -79,69 +79,42 @@
   --elevate-1: rgba(0, 0, 0, 0.03);
   --elevate-2: rgba(0, 0, 0, 0.08);
 
-  --background: 224 25% 8%;
+  --background: 210 29% 94%;
+  --foreground: 220 24% 17%;
+  --border: 214 20% 84%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 24% 17%;
+  --card-border: 214 20% 84%;
+  --sidebar: 215 28% 96%;
+  --sidebar-foreground: 220 24% 24%;
+  --sidebar-border: 214 20% 84%;
+  --sidebar-primary: 168 52% 30%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 204 35% 91%;
+  --sidebar-accent-foreground: 220 24% 17%;
+  --sidebar-ring: 168 52% 30%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 220 24% 17%;
+  --popover-border: 214 20% 84%;
+  --primary: 168 52% 30%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 24% 91%;
+  --secondary-foreground: 220 24% 24%;
+  --muted: 210 24% 91%;
+  --muted-foreground: 215 13% 49%;
+  --accent: 20 86% 63%;
+  --accent-foreground: 220 30% 14%;
+  --destructive: 2 70% 54%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 214 20% 78%;
+  --ring: 168 52% 30%;
+  --chart-1: 168 52% 30%;
+  --chart-2: 20 86% 63%;
+  --chart-3: 205 70% 55%;
+  --chart-4: 2 70% 54%;
+  --chart-5: 42 78% 52%;
 
-  --foreground: 210 20% 92%;
-
-  --border: 218 18% 21%;
-
-  --card: 223 23% 11%;
-
-  --card-foreground: 210 20% 92%;
-
-  --card-border: 218 18% 22%;
-
-  --sidebar: 226 29% 6%;
-
-  --sidebar-foreground: 210 18% 82%;
-
-  --sidebar-border: 218 20% 15%;
-
-  --sidebar-primary: 174 82% 48%;
-
-  --sidebar-primary-foreground: 224 25% 8%;
-
-  --sidebar-accent: 225 22% 14%;
-
-  --sidebar-accent-foreground: 210 20% 92%;
-
-  --sidebar-ring: 174 82% 48%;
-
-  --popover: 223 23% 12%;
-
-  --popover-foreground: 210 20% 92%;
-
-  --popover-border: 218 18% 24%;
-
-  --primary: 174 82% 48%;
-
-  --primary-foreground: 224 30% 8%;
-
-  --secondary: 222 20% 17%;
-
-  --secondary-foreground: 210 20% 90%;
-
-  --muted: 222 18% 15%;
-
-  --muted-foreground: 216 12% 58%;
-
-  --accent: 39 96% 62%;
-
-  --accent-foreground: 224 30% 8%;
-
-  --destructive: 352 76% 62%;
-
-  --destructive-foreground: 210 20% 96%;
-
-  --input: 218 18% 24%;
-  --ring: 174 82% 48%;
-  --chart-1: 174 82% 48%;
-  --chart-2: 39 96% 62%;
-  --chart-3: 265 78% 72%;
-  --chart-4: 352 76% 62%;
-  --chart-5: 198 86% 61%;
-
-  --app-font-sans: 'Space Grotesk', sans-serif;
+   --app-font-sans: 'Space Grotesk', sans-serif;
   --app-font-serif: Georgia, serif;
   --app-font-mono: 'DM Mono', monospace;
   --radius: 0.5rem; /* 8px */
@@ -321,15 +294,10 @@
   }
 }
 
-html {
-  background: #0f1320;
-}
-
+html { background: #e7edf2; }
 body {
   min-width: 320px;
-  background:
-    radial-gradient(circle at 92% 0%, rgba(35, 217, 192, 0.08), transparent 28rem),
-    #0f1320;
+  background: #e7edf2;
 }
 
 button, input, textarea {
@@ -354,9 +322,20 @@ button, input, textarea {
 .animate-slide-in { animation: slide-in .28s ease-out both; }
 .animate-pulse-line { animation: pulse-line 2.2s ease-in-out infinite; transform-origin: left; }
 .grid-surface {
-  background-image: linear-gradient(rgba(126, 144, 177, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(126, 144, 177, 0.045) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image: linear-gradient(rgba(70, 93, 112, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(70, 93, 112, 0.08) 1px, transparent 1px);
+  background-size: 28px 28px;
 }
+
+.builder-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+.builder-scrollbar::-webkit-scrollbar-thumb { background: #c3ced5; border-radius: 99px; }
+.builder-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.canvas-grid {
+  background-color: #f7f3ec;
+  background-image: radial-gradient(circle, rgba(61, 84, 95, .16) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+.selection-ring { box-shadow: 0 0 0 1px #167461, 0 0 0 4px rgba(22, 116, 97, .13); }
+.soft-shadow { box-shadow: 0 18px 45px rgba(43, 59, 68, .12), 0 2px 6px rgba(43, 59, 68, .06); }
 
 /**
  * Using the elevate system.

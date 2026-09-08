@@ -1,6 +1,6 @@
-# Conflict-Free Page Editor
+# Northstar Studio
 
-A local interactive sandbox for testing selective DOM-node locking, concurrent edits, and deterministic conflict resolution.
+A lightweight Wix-style visual page builder with selective DOM-node locking, concurrent edit simulation, and deterministic conflict resolution.
 
 ## Run & Operate
 
@@ -22,13 +22,13 @@ A local interactive sandbox for testing selective DOM-node locking, concurrent e
 
 ## Where things live
 
-- `artifacts/conflict-free-editor/src/pages/editor.tsx` — the complete local-state editor experience
+- `artifacts/conflict-free-editor/src/pages/editor.tsx` — the complete local-state visual builder experience
 - `artifacts/conflict-free-editor/src/index.css` — app theme and interaction animations
 - `artifacts/conflict-free-editor/src/App.tsx` — route and app shell entry point
 
 ## Architecture decisions
 
-- The first version is intentionally frontend-only and uses local React state so conflict behavior can be tested without auth, a database, or a realtime service.
+- The first version is intentionally frontend-only and uses local React state so the builder and conflict behavior can be tested without auth, a database, or a realtime service.
 - Locks are modeled as per-node edit leases; blocked writes are recorded in the activity stream rather than silently discarded.
 - The simulator makes the resolution rule visible: the active lease wins and the competing edit is deferred.
 
