@@ -1,6 +1,6 @@
-# [Project name]
+# Conflict-Free Page Editor
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A local interactive sandbox for testing selective DOM-node locking, concurrent edits, and deterministic conflict resolution.
 
 ## Run & Operate
 
@@ -22,23 +22,31 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/conflict-free-editor/src/pages/editor.tsx` — the complete local-state editor experience
+- `artifacts/conflict-free-editor/src/index.css` — app theme and interaction animations
+- `artifacts/conflict-free-editor/src/App.tsx` — route and app shell entry point
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The first version is intentionally frontend-only and uses local React state so conflict behavior can be tested without auth, a database, or a realtime service.
+- Locks are modeled as per-node edit leases; blocked writes are recorded in the activity stream rather than silently discarded.
+- The simulator makes the resolution rule visible: the active lease wins and the competing edit is deferred.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Select and inspect DOM-like page nodes.
+- Add new editable nodes and change their labels/content.
+- Switch between two simulated collaborators.
+- Acquire/release node locks and observe blocked lock attempts.
+- Run a deterministic concurrent-edit simulation and inspect the resulting event log.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+_None recorded._
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- This build is a testing sandbox, not a real multi-user collaboration backend; refresh resets the local session state.
 
 ## Pointers
 
