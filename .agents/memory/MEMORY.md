@@ -1,2 +1,3 @@
 - [Realtime WebSocket routing](realtime-websocket-routing.md) — declare WebSocket paths explicitly in artifact service routing or preview upgrades may be dropped.
 - [CRDT collaboration](crdt-collaboration.md) — merge authored page fields with Lamport registers, keep leases visible, and keep cursors ephemeral.
+- [Drag performance](drag-performance.md) — mutate the active canvas element during drag, commit state on release, and throttle shared geometry updates.

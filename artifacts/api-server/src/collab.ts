@@ -42,6 +42,7 @@ type Collaborator = {
 type Client = {
   id: string;
   name: string;
+  userId?: string;
   socket: Socket;
 };
 
@@ -301,7 +302,7 @@ function applyMessage(client: Client, message: ClientMessage) {
   }
 
   if (message.type === "join") {
-    if (message.userId?.trim()) client.id = message.userId.trim().slice(0, 128);
+    if (message.userId?.trim()) client.userId = message.userId.trim().slice(0, 128);
     if (message.name?.trim()) client.name = message.name.trim().slice(0, 32);
     send(client.socket, { ...snapshot(), clientId: client.id });
     broadcast({ type: "presence-list", collaborators: collaborators() });
