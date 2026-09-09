@@ -18,6 +18,18 @@ import {
   LayoutTemplate,
   Link2,
   Lock,
+  LogIn,
+  UserPlus,
+  LayoutDashboard,
+  MessageCircle,
+  Navigation,
+  Image as ImageIcon,
+  CreditCard,
+  Quote,
+  Star,
+  Ruler,
+  Palette,
+  Minus,
   MousePointer2,
   PanelRight,
   RefreshCcw,
@@ -36,7 +48,8 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 
-type NodeType = 'PAGE' | 'HEADING' | 'TEXT' | 'BUTTON' | 'SECTION';
+type NodeType = 'PAGE' | 'HEADING' | 'TEXT' | 'BUTTON' | 'SECTION' | 'NAVBAR' | 'HERO' | 'IMAGE' | 'CARD' | 'PRICING' | 'TESTIMONIAL' | 'LOGIN' | 'REGISTER' | 'DASHBOARD' | 'CHAT' | 'FOOTER' | 'DIVIDER';
+type Breakpoint = 'desktop' | 'tablet' | 'mobile';
 type EditableField = 'label' | 'content';
 type ConnectionState = 'connecting' | 'live' | 'offline' | 'blocked';
 
@@ -51,6 +64,12 @@ type PageNode = {
   x: number;
   y: number;
   width: number;
+  tabletX?: number;
+  tabletY?: number;
+  tabletWidth?: number;
+  mobileX?: number;
+  mobileY?: number;
+  mobileWidth?: number;
 };
 
 type Collaborator = {
@@ -81,7 +100,7 @@ type ServerMessage =
 type ClientMessage =
   | { type: 'join'; name: string }
   | { type: 'edit'; nodeId: string; field: EditableField; value: string }
-  | { type: 'move'; nodeId: string; x: number; y: number; width?: number }
+  | { type: 'move'; nodeId: string; x: number; y: number; width?: number; breakpoint?: Breakpoint }
   | { type: 'insert'; nodeType: Exclude<NodeType, 'PAGE'>; x?: number; y?: number }
   | { type: 'lock'; nodeId: string }
   | { type: 'unlock'; nodeId: string }
@@ -108,6 +127,18 @@ const blockOptions: Array<{ type: Exclude<NodeType, 'PAGE'>; label: string; deta
   { type: 'TEXT', label: 'Text', detail: 'Paragraph copy', icon: AlignLeft, tint: '#587493' },
   { type: 'BUTTON', label: 'Button', detail: 'A clear action', icon: Square, tint: '#cf743f' },
   { type: 'SECTION', label: 'Section', detail: 'A content region', icon: LayoutTemplate, tint: '#8060a3' },
+  { type: 'NAVBAR', label: 'Navbar', detail: 'Site navigation', icon: Navigation, tint: '#2a6f97' },
+  { type: 'HERO', label: 'Hero', detail: 'Conversion intro', icon: WandSparkles, tint: '#b45f72' },
+  { type: 'IMAGE', label: 'Image', detail: 'Visual media', icon: ImageIcon, tint: '#467a62' },
+  { type: 'CARD', label: 'Card grid', detail: 'Feature collection', icon: Grid2X2, tint: '#8060a3' },
+  { type: 'PRICING', label: 'Pricing', detail: 'Plans and tiers', icon: CreditCard, tint: '#ba6d39' },
+  { type: 'TESTIMONIAL', label: 'Testimonial', detail: 'Social proof', icon: Quote, tint: '#a06c4d' },
+  { type: 'LOGIN', label: 'Login', detail: 'Member access', icon: LogIn, tint: '#326b8a' },
+  { type: 'REGISTER', label: 'Register', detail: 'Create account', icon: UserPlus, tint: '#326b8a' },
+  { type: 'DASHBOARD', label: 'Dashboard', detail: 'App overview', icon: LayoutDashboard, tint: '#536e8e' },
+  { type: 'CHAT', label: 'Chat', detail: 'Messages and support', icon: MessageCircle, tint: '#177461' },
+  { type: 'FOOTER', label: 'Footer', detail: 'Closing navigation', icon: Footprints, tint: '#5b6b72' },
+  { type: 'DIVIDER', label: 'Divider', detail: 'Visual rhythm', icon: Minus, tint: '#89999c' },
 ];
 
 const typeMeta: Record<NodeType, { short: string; color: string; bg: string }> = {
@@ -116,6 +147,18 @@ const typeMeta: Record<NodeType, { short: string; color: string; bg: string }> =
   TEXT: { short: 'TX', color: '#587493', bg: '#e2eaf3' },
   BUTTON: { short: 'BT', color: '#cf743f', bg: '#f8e4d8' },
   SECTION: { short: 'SE', color: '#8060a3', bg: '#ede4f3' },
+  NAVBAR: { short: 'NV', color: '#2a6f97', bg: '#e0edf5' },
+  HERO: { short: 'HR', color: '#b45f72', bg: '#f5e2e7' },
+  IMAGE: { short: 'IM', color: '#467a62', bg: '#e4f0e9' },
+  CARD: { short: 'CD', color: '#8060a3', bg: '#ede4f3' },
+  PRICING: { short: 'PR', color: '#ba6d39', bg: '#f8e7dc' },
+  TESTIMONIAL: { short: 'TS', color: '#a06c4d', bg: '#f3e7df' },
+  LOGIN: { short: 'LI', color: '#326b8a', bg: '#e2eef4' },
+  REGISTER: { short: 'RG', color: '#326b8a', bg: '#e2eef4' },
+  DASHBOARD: { short: 'DB', color: '#536e8e', bg: '#e5ebf3' },
+  CHAT: { short: 'CH', color: '#177461', bg: '#d9eee8' },
+  FOOTER: { short: 'FT', color: '#5b6b72', bg: '#e8edef' },
+  DIVIDER: { short: '—', color: '#89999c', bg: '#edf1f2' },
 };
 
 const defaults: Record<Exclude<NodeType, 'PAGE'>, { label: string; content: string; width: number }> = {
@@ -123,6 +166,18 @@ const defaults: Record<Exclude<NodeType, 'PAGE'>, { label: string; content: stri
   TEXT: { label: 'New text block', content: 'Write something useful here.', width: 470 },
   BUTTON: { label: 'New button', content: 'Explore more', width: 180 },
   SECTION: { label: 'New section', content: 'A fresh region for your story.', width: 530 },
+  NAVBAR: { label: 'Main navigation', content: 'Home · Work · About · Contact', width: 600 },
+  HERO: { label: 'Hero message', content: 'Build something worth sharing.', width: 560 },
+  IMAGE: { label: 'Featured image', content: 'Editorial image placeholder', width: 420 },
+  CARD: { label: 'Feature cards', content: 'Fast setup · Clear hierarchy · Better flow', width: 560 },
+  PRICING: { label: 'Pricing plans', content: 'Starter · Studio · Team', width: 560 },
+  TESTIMONIAL: { label: 'Customer quote', content: '“This made our launch feel effortless.”', width: 500 },
+  LOGIN: { label: 'Login form', content: 'Welcome back', width: 360 },
+  REGISTER: { label: 'Registration form', content: 'Create your account', width: 360 },
+  DASHBOARD: { label: 'Dashboard shell', content: 'Overview · Activity · Progress', width: 560 },
+  CHAT: { label: 'Chat panel', content: 'Ask us anything', width: 360 },
+  FOOTER: { label: 'Site footer', content: 'Northstar · Privacy · Terms', width: 600 },
+  DIVIDER: { label: 'Section divider', content: '', width: 560 },
 };
 
 function formatTime() {
