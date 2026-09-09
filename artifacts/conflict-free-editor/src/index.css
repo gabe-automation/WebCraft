@@ -336,6 +336,44 @@ button, input, textarea {
 }
 .selection-ring { box-shadow: 0 0 0 1px #167461, 0 0 0 4px rgba(22, 116, 97, .13); }
 .soft-shadow { box-shadow: 0 18px 45px rgba(43, 59, 68, .12), 0 2px 6px rgba(43, 59, 68, .06); }
+.page-frame {
+  position: relative;
+  min-height: 900px;
+  width: 660px;
+  overflow: hidden;
+  background: #fffdfa;
+}
+.page-node {
+  touch-action: none;
+  user-select: none;
+  transition: box-shadow .16s ease, border-color .16s ease, background-color .16s ease;
+}
+.page-node.is-dragging {
+  z-index: 40;
+  cursor: grabbing;
+  transition: none;
+}
+.presence-cursor {
+  pointer-events: none;
+  position: absolute;
+  z-index: 60;
+  transform: translate(-1px, -1px);
+  transition: left .12s ease, top .12s ease;
+}
+.presence-cursor svg { filter: drop-shadow(0 1px 1px rgba(31, 58, 61, .18)); }
+.code-scroll {
+  max-height: 560px;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.code-scroll pre {
+  tab-size: 2;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.blocked-banner {
+  animation: slide-in .22s ease-out both;
+}
 
 /**
  * Using the elevate system.

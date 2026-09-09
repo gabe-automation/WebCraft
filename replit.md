@@ -1,6 +1,6 @@
 # Northstar Studio
 
-A lightweight Wix-style visual page builder with selective DOM-node locking, concurrent edit simulation, and deterministic conflict resolution.
+A real-time Wix-style visual page builder with movable HTML-like blocks, selective DOM-node locking, and a whole-document HTML/CSS/JS code view.
 
 ## Run & Operate
 
@@ -22,23 +22,30 @@ A lightweight Wix-style visual page builder with selective DOM-node locking, con
 
 ## Where things live
 
-- `artifacts/conflict-free-editor/src/pages/editor.tsx` — the complete local-state visual builder experience
+- `artifacts/conflict-free-editor/src/pages/editor.tsx` — the authenticated visual builder, live presence layer, and complete website source view
 - `artifacts/conflict-free-editor/src/index.css` — app theme and interaction animations
 - `artifacts/conflict-free-editor/src/App.tsx` — route and app shell entry point
+- `artifacts/api-server/src/collab.ts` — in-memory CRDT-backed page state and native WebSocket collaboration protocol
+- `artifacts/api-server/src/middlewares/clerkProxyMiddleware.ts` — production Clerk frontend API proxy
 
 ## Architecture decisions
 
-- The first version is intentionally frontend-only and uses local React state so the builder and conflict behavior can be tested without auth, a database, or a realtime service.
+- Clerk manages real user accounts and the default Google/email sign-in flow; the browser uses Clerk session cookies and sends the signed-in profile into the realtime presence room.
 - Locks are modeled as per-node edit leases; blocked writes are recorded in the activity stream rather than silently discarded.
-- The simulator makes the resolution rule visible: the active lease wins and the competing edit is deferred.
+- The server stores page properties as deterministic Lamport LWW-register CRDT fields, then applies node leases as the conflict-aware coordination layer.
+- The code inspector generates the complete authored website as `index.html`, `styles.css`, and `script.js` from the shared node tree; editor internals are not included.
+- Cursor coordinates are ephemeral WebSocket presence messages and are rendered as labeled collaborator pointers over the page frame.
 
 ## Product
 
 - Select and inspect DOM-like page nodes.
 - Add new editable nodes and change their labels/content.
-- Switch between two simulated collaborators.
+- Sign in with real Google/email users and see account-backed collaborator presence.
 - Acquire/release node locks and observe blocked lock attempts.
 - Run a deterministic concurrent-edit simulation and inspect the resulting event log.
+- Drag blocks around the page canvas and see position changes shared across connected tabs.
+- See other users' live cursors and movement over the page frame.
+- Inspect and copy the full generated website HTML, CSS, or JavaScript document.
 
 ## User preferences
 
@@ -46,7 +53,7 @@ _None recorded._
 
 ## Gotchas
 
-- This build is a testing sandbox, not a real multi-user collaboration backend; refresh resets the local session state.
+- The collaboration server still stores the active room in memory; restarting the API server resets the shared page. Durable projects and automatic abandoned-lease expiry are not implemented yet.
 
 ## Pointers
 
