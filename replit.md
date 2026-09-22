@@ -35,6 +35,8 @@ A real-time Wix-style visual page builder with movable HTML-like blocks, selecti
 - The server stores page properties as deterministic Lamport LWW-register CRDT fields, then applies node leases as the conflict-aware coordination layer.
 - The code inspector generates the complete authored website as `index.html`, `styles.css`, and `script.js` from the shared node tree; editor internals are not included.
 - Cursor coordinates are ephemeral WebSocket presence messages and are rendered as labeled collaborator pointers over the page frame.
+- Chat messages and whiteboard marks use bounded realtime WebSocket broadcasts and are rehydrated from the room snapshot; they remain separate from authored website DOM state.
+- Responsive geometry is stored per breakpoint in the same CRDT register model, while theme controls affect the generated website export without changing editor chrome.
 
 ## Product
 
@@ -46,6 +48,9 @@ A real-time Wix-style visual page builder with movable HTML-like blocks, selecti
 - Drag blocks around the page canvas and see position changes shared across connected tabs.
 - See other users' live cursors and movement over the page frame.
 - Inspect and copy the full generated website HTML, CSS, or JavaScript document.
+- Insert navigation, hero, image, cards, pricing, testimonial, auth, dashboard, chat, footer, and divider components with responsive desktop/tablet/mobile geometry.
+- Collaborate in a realtime room chat and shared whiteboard with sticky, text, rectangle, line, and freehand tools.
+- Toggle measurement guides and adjust authored export colors through the theme direction controls.
 
 ## User preferences
 

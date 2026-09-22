@@ -5,7 +5,7 @@ import type { Socket } from "node:net";
 
 import { logger } from "./lib/logger";
 
-type NodeType = "PAGE" | "HEADING" | "TEXT" | "BUTTON" | "SECTION";
+type NodeType = "PAGE" | "HEADING" | "TEXT" | "BUTTON" | "SECTION" | "NAVBAR" | "HERO" | "IMAGE" | "CARD" | "PRICING" | "TESTIMONIAL" | "LOGIN" | "REGISTER" | "DASHBOARD" | "CHAT" | "FOOTER" | "DIVIDER";
 
 type PageNode = {
   id: string;
@@ -18,6 +18,12 @@ type PageNode = {
   x: number;
   y: number;
   width: number;
+  tabletX?: number;
+  tabletY?: number;
+  tabletWidth?: number;
+  mobileX?: number;
+  mobileY?: number;
+  mobileWidth?: number;
 };
 
 type ActivityEvent = {
@@ -59,9 +65,34 @@ type ClientMessage = {
   x?: number;
   y?: number;
   width?: number;
+  breakpoint?: "desktop" | "tablet" | "mobile";
   nodeType?: Exclude<NodeType, "PAGE">;
   cursor?: { x: number; y: number };
   action?: "lock" | "unlock";
+  text?: string;
+  whiteboardItem?: WhiteboardItem;
+  whiteboardItemId?: string;
+};
+
+type ChatMessage = {
+  id: string;
+  authorId: string;
+  author: string;
+  text: string;
+  timestamp: string;
+};
+
+type WhiteboardItem = {
+  id: string;
+  kind: "sticky" | "text" | "rectangle" | "line" | "draw";
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  text?: string;
+  color?: string;
+  points?: Array<{ x: number; y: number }>;
+  authorId: string;
 };
 
 const accents = ["#177461", "#e1844c", "#8060a3", "#587493"];
@@ -145,6 +176,8 @@ const initialEvents: ActivityEvent[] = [
 const nodes = new Map(initialNodes.map((node) => [node.id, node]));
 const events: ActivityEvent[] = [...initialEvents];
 const clients = new Map<Socket, Client>();
+const chatMessages: ChatMessage[] = [];
+const whiteboardItems = new Map<string, WhiteboardItem>();
 type CrdtValue = string | number | null;
 type CrdtStamp = { clock: number; actor: string };
 type CrdtRegister = { value: CrdtValue; stamp: CrdtStamp };
@@ -184,6 +217,9 @@ function ensureRegisters(node: PageNode) {
   nodeRegisters.set("x", { value: node.x, stamp: initialStamp });
   nodeRegisters.set("y", { value: node.y, stamp: initialStamp });
   nodeRegisters.set("width", { value: node.width, stamp: initialStamp });
+  for (const field of ["tabletX", "tabletY", "tabletWidth", "mobileX", "mobileY", "mobileWidth"] as const) {
+    if (typeof node[field] === "number") nodeRegisters.set(field, { value: node[field]!, stamp: initialStamp });
+  }
   registers.set(node.id, nodeRegisters);
   return nodeRegisters;
 }
@@ -199,6 +235,9 @@ function writeRegister(node: PageNode, field: string, value: CrdtValue, stamp: C
   if (field === "x" && typeof value === "number") node.x = value;
   if (field === "y" && typeof value === "number") node.y = value;
   if (field === "width" && typeof value === "number") node.width = value;
+  if (["tabletX", "tabletY", "tabletWidth", "mobileX", "mobileY", "mobileWidth"].includes(field) && typeof value === "number") {
+    (node as unknown as Record<string, number>)[field] = value;
+  }
   return true;
 }
 
@@ -260,6 +299,8 @@ function snapshot() {
     nodes: [...nodes.values()].sort((a, b) => a.position - b.position),
     events,
     collaborators: collaborators(),
+    chat: chatMessages,
+    whiteboard: [...whiteboardItems.values()],
     crdt: {
       algorithm: "Lamport LWW-register CRDT",
       clock: lamportClock,
@@ -309,12 +350,76 @@ function applyMessage(client: Client, message: ClientMessage) {
     return;
   }
 
+  if (message.type === "chat") {
+    const operation = beginOperation(client, message);
+    if (!operation || typeof message.text !== "string") return;
+    const text = message.text.trim().slice(0, 1000);
+    if (!text) return;
+    const chatMessage: ChatMessage = {
+      id: `chat-${randomUUID()}`,
+      authorId: client.id,
+      author: client.name,
+      text,
+      timestamp: now(),
+    };
+    chatMessages.push(chatMessage);
+    chatMessages.splice(0, Math.max(0, chatMessages.length - 60));
+    createEvent(client.name, "messaged", "Realtime chat", "Sent a message to the collaboration room", "applied");
+    broadcast({ type: "chat-message", message: chatMessage });
+    return;
+  }
+
+  if (message.type === "whiteboard-add" && message.whiteboardItem) {
+    const operation = beginOperation(client, message);
+    if (!operation) return;
+    const item = message.whiteboardItem;
+    if (!["sticky", "text", "rectangle", "line", "draw"].includes(item.kind)) return;
+    const nextItem: WhiteboardItem = {
+      ...item,
+      id: item.id || `whiteboard-${randomUUID()}`,
+      authorId: client.id,
+      x: Math.max(0, Math.min(640, Math.round(item.x))),
+      y: Math.max(0, Math.min(440, Math.round(item.y))),
+      width: typeof item.width === "number" ? Math.max(1, Math.min(640, Math.round(item.width))) : undefined,
+      height: typeof item.height === "number" ? Math.max(1, Math.min(440, Math.round(item.height))) : undefined,
+      text: typeof item.text === "string" ? item.text.slice(0, 240) : undefined,
+      color: typeof item.color === "string" ? item.color.slice(0, 24) : "#e1844c",
+      points: item.points?.slice(0, 400).map((point) => ({
+        x: Math.max(0, Math.min(640, Math.round(point.x))),
+        y: Math.max(0, Math.min(440, Math.round(point.y))),
+      })),
+    };
+    whiteboardItems.set(nextItem.id, nextItem);
+    createEvent(client.name, "drew", "Collaboration whiteboard", `Added a ${nextItem.kind} tool mark`, "applied");
+    broadcast({ type: "whiteboard-update", items: [...whiteboardItems.values()] });
+    return;
+  }
+
+  if (message.type === "whiteboard-remove" && typeof message.whiteboardItemId === "string") {
+    const operation = beginOperation(client, message);
+    if (!operation) return;
+    whiteboardItems.delete(message.whiteboardItemId);
+    broadcast({ type: "whiteboard-update", items: [...whiteboardItems.values()] });
+    return;
+  }
+
+  if (message.type === "whiteboard-clear") {
+    const operation = beginOperation(client, message);
+    if (!operation) return;
+    whiteboardItems.clear();
+    createEvent(client.name, "cleared", "Collaboration whiteboard", "Removed all shared marks", "applied");
+    broadcast({ type: "whiteboard-update", items: [] });
+    return;
+  }
+
   if (message.type === "reset") {
     const operation = beginOperation(client, message);
     if (!operation) return;
     nodes.clear();
     for (const node of initialNodes) nodes.set(node.id, { ...node });
     events.splice(0, events.length, ...initialEvents);
+    chatMessages.splice(0);
+    whiteboardItems.clear();
     registers.clear();
     revision += 1;
     broadcast(snapshot());
@@ -330,6 +435,18 @@ function applyMessage(client: Client, message: ClientMessage) {
       TEXT: { label: "New text block", content: "Write something useful here.", width: 470 },
       BUTTON: { label: "New button", content: "Explore more", width: 180 },
       SECTION: { label: "New section", content: "A fresh region for your story.", width: 530 },
+      NAVBAR: { label: "Main navigation", content: "Home · Work · About · Contact", width: 600 },
+      HERO: { label: "Hero message", content: "Build something worth sharing.", width: 560 },
+      IMAGE: { label: "Featured image", content: "Editorial image placeholder", width: 420 },
+      CARD: { label: "Feature cards", content: "Fast setup · Clear hierarchy · Better flow", width: 560 },
+      PRICING: { label: "Pricing plans", content: "Starter · Studio · Team", width: 560 },
+      TESTIMONIAL: { label: "Customer quote", content: "“This made our launch feel effortless.”", width: 500 },
+      LOGIN: { label: "Login form", content: "Welcome back", width: 360 },
+      REGISTER: { label: "Registration form", content: "Create your account", width: 360 },
+      DASHBOARD: { label: "Dashboard shell", content: "Overview · Activity · Progress", width: 560 },
+      CHAT: { label: "Chat panel", content: "Ask us anything", width: 360 },
+      FOOTER: { label: "Site footer", content: "Northstar · Privacy · Terms", width: 600 },
+      DIVIDER: { label: "Section divider", content: "", width: 560 },
     };
     const preset = defaults[message.nodeType];
     const next: PageNode = {
@@ -394,10 +511,14 @@ function applyMessage(client: Client, message: ClientMessage) {
   if (message.type === "move" && typeof message.x === "number" && typeof message.y === "number") {
     const nextX = Math.max(20, Math.min(720, Math.round(message.x)));
     const nextY = Math.max(20, Math.min(760, Math.round(message.y)));
-    const changedX = writeRegister(node, "x", nextX, operation.stamp);
-    const changedY = writeRegister(node, "y", nextY, operation.stamp);
+    const breakpoint = message.breakpoint ?? "desktop";
+    const xField = breakpoint === "tablet" ? "tabletX" : breakpoint === "mobile" ? "mobileX" : "x";
+    const yField = breakpoint === "tablet" ? "tabletY" : breakpoint === "mobile" ? "mobileY" : "y";
+    const widthField = breakpoint === "tablet" ? "tabletWidth" : breakpoint === "mobile" ? "mobileWidth" : "width";
+    const changedX = writeRegister(node, xField, nextX, operation.stamp);
+    const changedY = writeRegister(node, yField, nextY, operation.stamp);
     const changedWidth = typeof message.width === "number"
-      ? writeRegister(node, "width", Math.max(120, Math.min(720, Math.round(message.width))), operation.stamp)
+      ? writeRegister(node, widthField, Math.max(120, Math.min(720, Math.round(message.width))), operation.stamp)
       : false;
     if (!changedX && !changedY && !changedWidth) return;
     node.lastEditedBy = client.id;
