@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, type RefObject } from 'react';
 import { useUser } from '@clerk/react';
+import { useLocation } from 'wouter';
 import {
   Activity,
   AlignLeft,
@@ -56,6 +57,7 @@ import {
 
 type NodeType = 'PAGE' | 'HEADING' | 'TEXT' | 'BUTTON' | 'SECTION' | 'NAVBAR' | 'HERO' | 'IMAGE' | 'CARD' | 'PRICING' | 'TESTIMONIAL' | 'LOGIN' | 'REGISTER' | 'DASHBOARD' | 'CHAT' | 'FOOTER' | 'DIVIDER';
 type Breakpoint = 'desktop' | 'tablet' | 'mobile';
+type WorkspacePage = 'builder' | 'whiteboard' | 'chat';
 type EditableField = 'label' | 'content';
 type ConnectionState = 'connecting' | 'live' | 'offline' | 'blocked';
 
@@ -97,6 +99,32 @@ type ActivityEvent = {
   timestamp: string;
 };
 
+type ChangeSnapshot = {
+  label: string;
+  content: string;
+  geometry: {
+    breakpoint: Breakpoint;
+    x: number;
+    y: number;
+    width: number;
+  };
+};
+
+type ChangeRecord = {
+  id: string;
+  nodeId: string;
+  nodeLabel: string;
+  nodeType: NodeType;
+  kind: 'content' | 'move';
+  field?: EditableField;
+  actor: string;
+  timestamp: string;
+  createdAt: number;
+  summary: string;
+  previous: ChangeSnapshot;
+  current: ChangeSnapshot;
+};
+
 type ChatMessage = {
   id: string;
   authorId: string;
@@ -126,10 +154,10 @@ type ThemeSettings = {
 };
 
 const defaultTheme: ThemeSettings = {
-  primary: '#214b47',
-  accent: '#e1844c',
-  surface: '#fffdfa',
-  ink: '#274047',
+  primary: '#292638',
+  accent: '#ef694e',
+  surface: '#fbf8f2',
+  ink: '#292638',
 };
 
 type ServerMessage =
@@ -155,10 +183,10 @@ type ClientMessage =
   | { type: 'reset' };
 
 const localId = 'local-you';
-const localCollaborator: Collaborator = { id: localId, name: 'You', initials: 'YU', accent: '#177461', status: 'editing' };
+const localCollaborator: Collaborator = { id: localId, name: 'You', initials: 'YU', accent: '#ef694e', status: 'editing' };
 
 const seedNodes: PageNode[] = [
-  { id: 'root', type: 'PAGE', label: 'Home page', content: 'Northstar Studio', lockedBy: null, position: 0, lastEditedBy: localId, x: 0, y: 0, width: 660 },
+  { id: 'root', type: 'PAGE', label: 'Home page', content: 'WebCraft Studio', lockedBy: null, position: 0, lastEditedBy: localId, x: 0, y: 0, width: 660 },
   { id: 'hero', type: 'HEADING', label: 'Hero heading', content: 'Make space for better work.', lockedBy: null, position: 1, lastEditedBy: localId, x: 80, y: 108, width: 530 },
   { id: 'intro', type: 'TEXT', label: 'Intro copy', content: 'A calm workspace for small teams to shape ideas together, without stepping on each other.', lockedBy: null, position: 2, lastEditedBy: localId, x: 82, y: 276, width: 470 },
   { id: 'cta', type: 'BUTTON', label: 'Primary action', content: 'Start a project', lockedBy: null, position: 3, lastEditedBy: localId, x: 82, y: 386, width: 180 },
@@ -223,7 +251,7 @@ const defaults: Record<Exclude<NodeType, 'PAGE'>, { label: string; content: stri
   REGISTER: { label: 'Registration form', content: 'Create your account', width: 360 },
   DASHBOARD: { label: 'Dashboard shell', content: 'Overview · Activity · Progress', width: 560 },
   CHAT: { label: 'Chat panel', content: 'Ask us anything', width: 360 },
-  FOOTER: { label: 'Site footer', content: 'Northstar · Privacy · Terms', width: 600 },
+  FOOTER: { label: 'Site footer', content: 'WebCraft · Privacy · Terms', width: 600 },
   DIVIDER: { label: 'Section divider', content: '', width: 560 },
 };
 
@@ -251,6 +279,38 @@ function getNodeGeometry(node: PageNode, breakpoint: Breakpoint, index = 0, canv
   };
 }
 
+function estimatedNodeHeight(node: PageNode) {
+  if (node.type === 'HEADING') return 100;
+  if (node.type === 'HERO' || node.type === 'CARD' || node.type === 'PRICING' || node.type === 'DASHBOARD') return 180;
+  if (node.type === 'IMAGE') return 150;
+  return 72;
+}
+
+function closestGuide(value: number, candidates: number[], threshold = 8) {
+  const match = candidates
+    .map((candidate) => ({ candidate, distance: Math.abs(candidate - value) }))
+    .sort((left, right) => left.distance - right.distance)[0];
+  return match && match.distance <= threshold ? match.candidate : value;
+}
+
+function getSnappedGeometry(nodes: PageNode[], nodeId: string, breakpoint: Breakpoint, canvasWidth: number, x: number, y: number, width: number) {
+  const siblings = nodes.filter((node) => node.id !== nodeId && node.type !== 'PAGE');
+  const xGuides = [20, canvasWidth - 20 - width, (canvasWidth - width) / 2];
+  const yGuides = [84];
+  siblings.forEach((node, index) => {
+    const geometry = getNodeGeometry(node, breakpoint, nodes.indexOf(node), canvasWidth);
+    const height = estimatedNodeHeight(node);
+    xGuides.push(geometry.x, geometry.x + geometry.width - width, geometry.x + (geometry.width - width) / 2);
+    yGuides.push(geometry.y, geometry.y + height, geometry.y + (height - estimatedNodeHeight(nodes.find((item) => item.id === nodeId) ?? node)) / 2);
+  });
+  return {
+    x: Math.max(20, Math.min(canvasWidth - 20 - width, Math.round(closestGuide(x, xGuides)))),
+    y: Math.max(84, Math.min(810, Math.round(closestGuide(y, yGuides)))),
+    alignedX: xGuides.some((guide) => Math.abs(guide - x) <= 8),
+    alignedY: yGuides.some((guide) => Math.abs(guide - y) <= 8),
+  };
+}
+
 function initials(name: string) {
   return name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'YU';
 }
@@ -270,17 +330,17 @@ function generateDocument(nodes: PageNode[], theme: ThemeSettings = defaultTheme
     if (node.type === 'HEADING') return `    <h1 data-node-id="${id}" class="node node-heading" style="${style}">${content}</h1>`;
     if (node.type === 'TEXT') return `    <p data-node-id="${id}" class="node node-text" style="${style}">${content}</p>`;
     if (node.type === 'BUTTON') return `    <button data-node-id="${id}" class="node node-button" style="${style}" type="button">${content}</button>`;
-    if (node.type === 'NAVBAR') return `    <nav data-node-id="${id}" class="node node-navbar" style="${style}"><strong>northstar</strong><span>${content}</span></nav>`;
+     if (node.type === 'NAVBAR') return `    <nav data-node-id="${id}" class="node node-navbar" style="${style}"><strong>webcraft</strong><span>${content}</span></nav>`;
     if (node.type === 'HERO') return `    <section data-node-id="${id}" class="node node-hero" style="${style}"><span class="section-kicker">A considered beginning</span><h1>${content}</h1><button class="node-button">Start exploring</button></section>`;
     if (node.type === 'IMAGE') return `    <figure data-node-id="${id}" class="node node-image" style="${style}"><div class="image-placeholder"><span>${content}</span></div><figcaption>Designed for the way your story moves.</figcaption></figure>`;
     if (node.type === 'CARD') return `    <section data-node-id="${id}" class="node node-card" style="${style}"><span class="section-kicker">Why it works</span><div class="card-grid">${content.split('·').map((item) => `<article><strong>${escapeHtml(item.trim())}</strong><p>Clear, useful, and ready for your audience.</p></article>`).join('')}</div></section>`;
     if (node.type === 'PRICING') return `    <section data-node-id="${id}" class="node node-pricing" style="${style}"><span class="section-kicker">Choose your pace</span><div class="pricing-grid">${content.split('·').map((item, itemIndex) => `<article class="${itemIndex === 1 ? 'featured' : ''}"><strong>${escapeHtml(item.trim())}</strong><b>${itemIndex === 0 ? '$12' : itemIndex === 1 ? '$28' : '$64'}</b><p>Everything you need to move forward.</p></article>`).join('')}</div></section>`;
-    if (node.type === 'TESTIMONIAL') return `    <blockquote data-node-id="${id}" class="node node-testimonial" style="${style}"><div class="stars">★★★★★</div><p>${content}</p><cite>— A thoughtful customer</cite></blockquote>`;
-    if (node.type === 'LOGIN') return `    <form data-node-id="${id}" class="node node-auth" style="${style}"><span class="section-kicker">Member access</span><h3>${content}</h3><input type="email" placeholder="Email address" /><input type="password" placeholder="Password" /><button class="node-button" type="button">Log in</button><small>Forgot password?</small></form>`;
-    if (node.type === 'REGISTER') return `    <form data-node-id="${id}" class="node node-auth" style="${style}"><span class="section-kicker">Join the community</span><h3>${content}</h3><input type="text" placeholder="Full name" /><input type="email" placeholder="Email address" /><button class="node-button" type="button">Create account</button><small>Already have an account? Log in</small></form>`;
+  if (node.type === 'TESTIMONIAL') return `    <blockquote data-node-id="${id}" class="node node-testimonial" style="${style}"><div class="stars">5.0 / 5</div><p>${content}</p><cite>— A thoughtful customer</cite></blockquote>`;
+     if (node.type === 'LOGIN') return `    <form data-node-id="${id}" class="node node-auth" style="${style}"><span class="section-kicker">Member access</span><h3>${content}</h3><input type="email" placeholder="Email address" /><input type="password" placeholder="Password" /><button class="node-button" type="submit">Log in</button><small>Forgot password?</small></form>`;
+     if (node.type === 'REGISTER') return `    <form data-node-id="${id}" class="node node-auth" style="${style}"><span class="section-kicker">Join the community</span><h3>${content}</h3><input type="text" placeholder="Full name" /><input type="email" placeholder="Email address" /><button class="node-button" type="submit">Create account</button><small>Already have an account? Log in</small></form>`;
     if (node.type === 'DASHBOARD') return `    <section data-node-id="${id}" class="node node-dashboard" style="${style}"><span class="section-kicker">Workspace overview</span><h3>${content}</h3><div class="dashboard-grid"><article><small>Active projects</small><b>08</b></article><article><small>Tasks completed</small><b>72%</b></article><article><small>Team activity</small><b>24</b></article></div></section>`;
     if (node.type === 'CHAT') return `    <section data-node-id="${id}" class="node node-chat" style="${style}"><div class="chat-head"><span class="status-dot"></span>${content}</div><div class="chat-message">Hi there. How can we help?</div><div class="chat-input">Write a message… <button type="button">Send</button></div></section>`;
-    if (node.type === 'FOOTER') return `    <footer data-node-id="${id}" class="node node-footer" style="${style}"><strong>northstar</strong><span>${content}</span></footer>`;
+     if (node.type === 'FOOTER') return `    <footer data-node-id="${id}" class="node node-footer" style="${style}"><strong>webcraft</strong><span>${content}</span></footer>`;
     if (node.type === 'DIVIDER') return `    <hr data-node-id="${id}" class="node node-divider" style="${style}" />`;
     return `    <section data-node-id="${id}" class="node node-section" style="${style}"><span class="section-kicker">A considered section</span><p>${content}</p></section>`;
   }).join('\n');
@@ -300,7 +360,7 @@ function generateDocument(nodes: PageNode[], theme: ThemeSettings = defaultTheme
   </head>
   <body>
     <main data-node-id="${escapeHtml(page.id)}" class="page-frame">
-      <header class="site-header"><strong>northstar</strong><nav><a href="#about">About</a><a href="#work">Work</a><a href="#contact">Contact</a></nav></header>
+       <header class="site-header"><strong>webcraft</strong><nav><a href="#about">About</a><a href="#work">Work</a><a href="#contact">Contact</a></nav></header>
 ${blocks}
       <footer class="site-footer">Made together, one visible decision at a time.</footer>
     </main>
@@ -314,7 +374,7 @@ ${blocks}
   --ink: ${theme.ink};
   color: var(--ink);
   background: #f7f3ec;
-  font-family: "Space Grotesk", system-ui, sans-serif;
+  font-family: "Plus Jakarta Sans", system-ui, sans-serif;
 }
 * { box-sizing: border-box; }
 body { margin: 0; min-width: 320px; background: #f7f3ec; }
@@ -358,12 +418,48 @@ body { margin: 0; min-width: 320px; background: #f7f3ec; }
 .node-divider { border:0; border-top:1px solid #d7e1e3; }
 ${responsiveRules}`;
   const js = `const nodes = document.querySelectorAll("[data-node-id]");
+const liveRegion = document.createElement("div");
+liveRegion.setAttribute("aria-live", "polite");
+liveRegion.className = "sr-only";
+document.body.appendChild(liveRegion);
+
 nodes.forEach((node) => {
   node.addEventListener("click", () => {
-    console.log("Selected node:", node.dataset.nodeId);
+    nodes.forEach((item) => item.classList.remove("is-selected"));
+    node.classList.add("is-selected");
+    liveRegion.textContent = "Selected " + (node.getAttribute("data-node-id") || "content block");
   });
 });
-console.log("Northstar page booted with", nodes.length, "nodes");`;
+
+document.querySelectorAll("button.node-button").forEach((button) => {
+  button.addEventListener("click", () => {
+    liveRegion.textContent = "Action selected: " + button.textContent.trim();
+    button.classList.add("is-complete");
+    window.setTimeout(() => button.classList.remove("is-complete"), 900);
+  });
+});
+
+document.querySelectorAll("form.node-auth").forEach((form) => {
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    liveRegion.textContent = "Form submitted. Connect this form to your authentication service.";
+  });
+});
+
+document.querySelectorAll(".node-chat").forEach((chat) => {
+  const input = chat.querySelector(".chat-input");
+  const send = chat.querySelector(".chat-input button");
+  if (!input || !send) return;
+  send.addEventListener("click", () => {
+    const message = document.createElement("div");
+    message.className = "chat-message";
+    message.textContent = "Thanks — we received your message.";
+    chat.insertBefore(message, input);
+    liveRegion.textContent = "Message sent.";
+  });
+});
+
+console.log("WebCraft page booted with", nodes.length, "authored nodes");`;
   return { html, css, js };
 }
 
@@ -373,21 +469,119 @@ function renderCanvasNode(node: PageNode) {
   if (node.type === 'TEXT') return <p className="pointer-events-none max-w-[500px] text-[14px] leading-6 text-[#71817d]">{node.content}</p>;
   if (node.type === 'BUTTON') return <span className="pointer-events-none inline-flex items-center gap-2 rounded-lg bg-[#214b47] px-4 py-3 text-[12px] font-bold text-[#effaf6]">{node.content}<ArrowUpRight size={14} /></span>;
   if (node.type === 'SECTION') return <div className="pointer-events-none rounded-lg border border-[#e8e0d6] bg-[#f7f2e9] p-5"><div className="mb-3 flex items-center justify-between"><span className="font-mono text-[9px] uppercase tracking-[.16em] text-[#b58362]">A considered section</span><Box size={15} className="text-[#c89572]" /></div><p className="text-[18px] font-semibold tracking-[-.03em] text-[#455b5b]">{node.content}</p></div>;
-  if (node.type === 'NAVBAR') return <div className="pointer-events-none flex items-center justify-between gap-4 rounded-lg border border-[#dce7e4] bg-white px-4 py-3 text-[10px] font-bold uppercase tracking-[.12em] text-[#1e6157]"><span>northstar</span><span className="font-normal normal-case tracking-normal text-[#879390]">{node.content}</span></div>;
+  if (node.type === 'NAVBAR') return <div className="pointer-events-none flex items-center justify-between gap-4 rounded-lg border border-[#dce7e4] bg-white px-4 py-3 text-[10px] font-bold uppercase tracking-[.12em] text-[#1e6157]"><span>webcraft</span><span className="font-normal normal-case tracking-normal text-[#879390]">{node.content}</span></div>;
   if (node.type === 'HERO') return <div className="pointer-events-none rounded-xl bg-gradient-to-br from-[#eff8f4] to-[#f7f2e9] p-6"><span className="font-mono text-[9px] uppercase tracking-[.16em] text-[#b58362]">A considered beginning</span><h3 className="mt-2 max-w-[470px] text-[34px] font-bold leading-none tracking-[-.07em] text-[#274047]">{node.content}</h3><span className="mt-4 inline-flex rounded-lg bg-[#214b47] px-3 py-2 text-[10px] font-bold text-white">Start exploring</span></div>;
   if (node.type === 'IMAGE') return <div className="pointer-events-none"><div className="grid min-h-[130px] place-items-center rounded-xl bg-gradient-to-br from-[#d9eee8] via-[#e9e0f2] to-[#f4d9ca] text-[11px] text-[#355a58]">{node.content}</div><p className="mt-2 text-[9px] text-[#879390]">Designed for the way your story moves.</p></div>;
   if (node.type === 'CARD') return <div className="pointer-events-none rounded-xl border border-[#e8e0d6] bg-white p-4"><span className="font-mono text-[9px] uppercase tracking-[.16em] text-[#b58362]">Why it works</span><div className="mt-3 grid grid-cols-3 gap-2">{parts.map((part) => <div key={part} className="rounded-lg bg-[#f7f2e9] p-3 text-[10px] font-bold text-[#52656b]">{part}<p className="mt-2 text-[9px] font-normal leading-3 text-[#879390]">Clear and ready for your audience.</p></div>)}</div></div>;
   if (node.type === 'PRICING') return <div className="pointer-events-none rounded-xl border border-[#e8e0d6] bg-white p-4"><span className="font-mono text-[9px] uppercase tracking-[.16em] text-[#b58362]">Choose your pace</span><div className="mt-3 grid grid-cols-3 gap-2">{parts.map((part, index) => <div key={part} className={`rounded-lg border p-3 ${index === 1 ? 'border-[#74ad9e] bg-[#edf7f4]' : 'border-[#e8e0d6] bg-[#f7f2e9]'}`}><strong className="text-[10px] text-[#52656b]">{part}</strong><b className="mt-2 block text-[18px] text-[#214b47]">{index === 0 ? '$12' : index === 1 ? '$28' : '$64'}</b></div>)}</div></div>;
-  if (node.type === 'TESTIMONIAL') return <blockquote className="pointer-events-none border-l-4 border-[#e1844c] bg-[#f7f2e9] p-4"><div className="text-[11px] tracking-[.15em] text-[#e1844c]">★★★★★</div><p className="mt-2 text-[16px] leading-5 text-[#455b5b]">{node.content}</p><cite className="mt-2 block text-[9px] text-[#879390]">— A thoughtful customer</cite></blockquote>;
+  if (node.type === 'TESTIMONIAL') return <blockquote className="pointer-events-none border-l-4 border-[#e1844c] bg-[#f7f2e9] p-4"><div className="text-[11px] font-mono tracking-[.08em] text-[#e1844c]">5.0 / 5</div><p className="mt-2 text-[16px] leading-5 text-[#455b5b]">{node.content}</p><cite className="mt-2 block text-[9px] text-[#879390]">— A thoughtful customer</cite></blockquote>;
   if (node.type === 'LOGIN' || node.type === 'REGISTER') return <div className="pointer-events-none grid gap-2 rounded-xl border border-[#d7e1e3] bg-[#f8fafb] p-4"><span className="font-mono text-[9px] uppercase tracking-[.16em] text-[#b58362]">{node.type === 'LOGIN' ? 'Member access' : 'Join the community'}</span><h3 className="text-[20px] font-bold tracking-[-.05em] text-[#274047]">{node.content}</h3><div className="rounded-md border border-[#d5e0e2] bg-white px-3 py-2 text-[9px] text-[#9aa7aa]">Email address</div><div className="rounded-md border border-[#d5e0e2] bg-white px-3 py-2 text-[9px] text-[#9aa7aa]">Password</div><span className="rounded-md bg-[#214b47] px-3 py-2 text-center text-[10px] font-bold text-white">{node.type === 'LOGIN' ? 'Log in' : 'Create account'}</span></div>;
   if (node.type === 'DASHBOARD') return <div className="pointer-events-none rounded-xl border border-[#e8e0d6] bg-white p-4"><span className="font-mono text-[9px] uppercase tracking-[.16em] text-[#b58362]">Workspace overview</span><h3 className="mt-2 text-[18px] font-bold text-[#274047]">{node.content}</h3><div className="mt-3 grid grid-cols-3 gap-2">{['08 active', '72% complete', '24 updates'].map((metric) => <div key={metric} className="rounded-lg bg-[#f7f2e9] p-2 text-[9px] text-[#52656b]">{metric}</div>)}</div></div>;
   if (node.type === 'CHAT') return <div className="pointer-events-none rounded-xl border border-[#d7e1e3] bg-white p-3"><div className="flex items-center gap-2 border-b border-[#ece8df] pb-2 text-[10px] font-bold text-[#274047]"><span className="h-2 w-2 rounded-full bg-[#2e9a7e]" />{node.content}</div><div className="my-3 max-w-[210px] rounded-lg bg-[#edf7f4] p-2 text-[9px] text-[#52656b]">Hi there. How can we help?</div><div className="rounded-md border border-[#d5e0e2] px-2 py-2 text-[9px] text-[#9aa7aa]">Write a message…</div></div>;
-  if (node.type === 'FOOTER') return <div className="pointer-events-none flex items-center justify-between gap-4 border-t border-[#ece8df] px-3 py-4 text-[10px] uppercase tracking-[.1em] text-[#1e6157]"><strong>northstar</strong><span className="normal-case tracking-normal text-[#879390]">{node.content}</span></div>;
+  if (node.type === 'FOOTER') return <div className="pointer-events-none flex items-center justify-between gap-4 border-t border-[#ece8df] px-3 py-4 text-[10px] uppercase tracking-[.1em] text-[#1e6157]"><strong>webcraft</strong><span className="normal-case tracking-normal text-[#879390]">{node.content}</span></div>;
   if (node.type === 'DIVIDER') return <hr className="pointer-events-none border-0 border-t border-[#d7e1e3]" />;
   return null;
 }
 
-function Editor() {
+type ChatWorkspaceProps = {
+  messages: ChatMessage[];
+  draft: string;
+  actorId: string;
+  onDraftChange: (value: string) => void;
+  onSend: () => void;
+};
+
+function ChatWorkspace({ messages, draft, actorId, onDraftChange, onSend }: ChatWorkspaceProps) {
+  return (
+    <section className="workspace-page mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[.18em] text-[#c9523e]">Workspace / chat</p>
+          <h2 className="mt-2 text-[clamp(2rem,5vw,3.5rem)] font-bold leading-none tracking-[-.08em] text-[#292638]">Keep the room moving.</h2>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-[#74717a]">A focused channel for decisions, handoffs, and the small context that should not live inside a page component.</p>
+        </div>
+        <div className="rounded-full border border-[#ded7cf] bg-[#fbf8f2] px-3 py-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#74717a]">{messages.length} shared messages</div>
+      </div>
+      <div className="grid min-h-[560px] gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
+        <div className="flex min-h-[560px] flex-col rounded-2xl border border-[#ded7cf] bg-[#fbf8f2] p-4 shadow-[0_18px_45px_rgba(42,39,57,.08)] sm:p-6">
+          <div className="mb-4 flex items-center justify-between border-b border-[#e7e0d8] pb-4">
+            <div className="flex items-center gap-3"><span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#292638] text-[#f3b7a7]"><MessageCircle size={16} /></span><div><p className="text-sm font-bold text-[#292638]">Realtime room</p><p className="text-[11px] text-[#8a858c]">Messages sync with every collaborator.</p></div></div>
+            <span className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-[.12em] text-[#3d8a71]"><span className="h-1.5 w-1.5 rounded-full bg-[#61b395]" /> Live</span>
+          </div>
+          <div data-testid="chat-messages" className="flex-1 space-y-3 overflow-y-auto pr-1">
+            {messages.length === 0 && <div className="flex h-full min-h-48 items-center justify-center rounded-xl border border-dashed border-[#ddd4cb] text-center"><div><MessageCircle size={20} className="mx-auto mb-3 text-[#c9523e]" /><p className="text-sm font-semibold text-[#5e5963]">Start the room conversation.</p><p className="mt-1 text-xs text-[#8a858c]">Share a decision or ask for a second set of eyes.</p></div></div>}
+            {messages.map((message) => <article key={message.id} className={`max-w-[min(82%,34rem)] rounded-2xl border px-4 py-3 ${message.authorId === actorId ? 'ml-auto border-[#f0c2b5] bg-[#fff0ea]' : 'border-[#e7e0d8] bg-white'}`}><div className="flex items-center justify-between gap-4"><span className="text-[11px] font-bold text-[#4c4651]">{message.authorId === actorId ? 'You' : message.author}</span><time className="font-mono text-[9px] text-[#9b949a]">{message.timestamp}</time></div><p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-[#655f68]">{message.text}</p></article>)}
+          </div>
+          <form onSubmit={(event) => { event.preventDefault(); onSend(); }} className="mt-5 flex gap-2 border-t border-[#e7e0d8] pt-4">
+            <input data-testid="input-chat" value={draft} onChange={(event) => onDraftChange(event.target.value)} maxLength={1000} placeholder="Message the room…" className="min-w-0 flex-1 rounded-xl border border-[#dcd4cc] bg-white px-4 py-3 text-sm text-[#4c4651] outline-none transition placeholder:text-[#aaa2a5] focus:border-[#ef694e] focus:ring-2 focus:ring-[#ef694e]/15" />
+            <button data-testid="button-send-chat" type="submit" disabled={!draft.trim()} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#ef694e] text-[#292638] transition hover:-translate-y-0.5 hover:bg-[#f2866c] disabled:cursor-not-allowed disabled:opacity-40" aria-label="Send chat message"><Send size={15} /></button>
+          </form>
+        </div>
+        <aside className="rounded-2xl border border-[#ded7cf] bg-[#292638] p-5 text-[#f7f1e8]">
+          <p className="font-mono text-[9px] uppercase tracking-[.16em] text-[#ef8b70]">Room notes</p>
+          <h3 className="mt-3 text-xl font-bold leading-tight tracking-[-.05em]">Keep decisions close to the work.</h3>
+          <p className="mt-4 text-xs leading-6 text-[#bcb6bd]">Use chat for context that helps the team move. The builder remains focused on the authored website and its source output.</p>
+          <div className="mt-8 border-t border-white/10 pt-4 font-mono text-[9px] uppercase tracking-[.12em] text-[#8e8992]">Bounded history · 60 messages</div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+type WhiteboardWorkspaceProps = {
+  items: WhiteboardItem[];
+  draftPoints: Array<{ x: number; y: number }>;
+  tool: WhiteboardItem['kind'] | 'select';
+  color: string;
+  text: string;
+  surfaceRef: RefObject<HTMLDivElement | null>;
+  onToolChange: (tool: WhiteboardItem['kind'] | 'select') => void;
+  onColorChange: (color: string) => void;
+  onTextChange: (text: string) => void;
+  onClear: () => void;
+  onRemove: (id: string) => void;
+  onPointerDown: (event: PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: PointerEvent<HTMLDivElement>) => void;
+};
+
+function WhiteboardWorkspace({ items, draftPoints, tool, color, text, surfaceRef, onToolChange, onColorChange, onTextChange, onClear, onRemove, onPointerDown, onPointerMove, onPointerUp }: WhiteboardWorkspaceProps) {
+  return (
+    <section className="workspace-page mx-auto w-full max-w-6xl p-4 sm:p-6 lg:p-8">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="font-mono text-[10px] uppercase tracking-[.18em] text-[#8060a3]">Workspace / whiteboard</p>
+          <h2 className="mt-2 text-[clamp(2rem,5vw,3.5rem)] font-bold leading-none tracking-[-.08em] text-[#292638]">Make the thinking visible.</h2>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-[#74717a]">Sketch flows, leave notes, and align on the next move without crowding the page canvas.</p>
+        </div>
+        <button data-testid="button-clear-whiteboard" onClick={onClear} className="flex items-center gap-2 rounded-xl border border-[#decfc7] bg-[#fbf8f2] px-3 py-2.5 font-mono text-[9px] uppercase tracking-[.12em] text-[#8e6359] transition hover:border-[#ef694e] hover:text-[#c9523e]"><Trash2 size={13} /> Clear board</button>
+      </div>
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_250px]">
+        <div ref={surfaceRef} data-testid="whiteboard-surface" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp} className={`relative aspect-[8/5] min-h-[420px] overflow-hidden rounded-2xl border border-[#d8cec5] bg-[#fcfaf5] shadow-[0_18px_45px_rgba(42,39,57,.08)] ${tool === 'select' ? 'cursor-default' : 'cursor-crosshair'}`}>
+          <div className="pointer-events-none absolute inset-0 opacity-60" style={{ backgroundImage: 'linear-gradient(#e5ddd4 1px, transparent 1px), linear-gradient(90deg, #e5ddd4 1px, transparent 1px)', backgroundSize: '32px 32px' }} />
+          <div className="pointer-events-none absolute left-5 top-4 font-mono text-[9px] uppercase tracking-[.14em] text-[#aaa09c]">Shared canvas / 640 × 440</div>
+          {items.map((item) => <div key={item.id} onDoubleClick={() => onRemove(item.id)} className="absolute" style={{ left: `${(item.x / 640) * 100}%`, top: `${(item.y / 440) * 100}%`, width: item.width ? `${(Math.abs(item.width) / 640) * 100}%` : undefined, height: item.height ? `${(Math.abs(item.height) / 440) * 100}%` : undefined }}>
+            {item.kind === 'sticky' && <div className="h-full w-full rounded-lg p-3 text-[11px] font-semibold leading-4 text-[#533c2e] shadow-[0_8px_18px_rgba(100,75,55,.14)]" style={{ backgroundColor: `${item.color ?? '#ef694e'}aa` }}>{item.text}</div>}
+            {item.kind === 'text' && <div className="h-full w-full rounded-md border border-[#c7b8c9] bg-white/90 px-3 py-2 text-[11px] font-semibold text-[#5d5268]">{item.text}</div>}
+            {item.kind === 'rectangle' && <div className="h-full w-full rounded-md border-2" style={{ borderColor: item.color ?? '#ef694e' }} />}
+            {item.kind === 'line' && <svg className="pointer-events-none absolute left-0 top-0 h-full w-full overflow-visible"><line x1={item.width && item.width < 0 ? `${Math.abs(item.width)}` : 0} y1={item.height && item.height < 0 ? `${Math.abs(item.height)}` : 0} x2={item.width && item.width > 0 ? item.width : 0} y2={item.height && item.height > 0 ? item.height : 0} stroke={item.color ?? '#ef694e'} strokeWidth="3" /></svg>}
+            {item.kind === 'draw' && <svg className="pointer-events-none absolute -left-0.5 -top-0.5 h-[calc(100%+4px)] w-[calc(100%+4px)] overflow-visible"><polyline points={(item.points ?? []).map((point) => `${point.x - item.x},${point.y - item.y}`).join(' ')} fill="none" stroke={item.color ?? '#ef694e'} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" vectorEffect="non-scaling-stroke" /></svg>}
+          </div>)}
+          {draftPoints.length > 1 && tool === 'draw' && <svg className="pointer-events-none absolute inset-0 h-full w-full"><polyline points={draftPoints.map((point) => `${(point.x / 640) * 100}%,${(point.y / 440) * 100}%`).join(' ')} fill="none" stroke={color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" vectorEffect="non-scaling-stroke" /></svg>}
+          {items.length === 0 && draftPoints.length === 0 && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-center"><div><Pencil size={22} className="mx-auto mb-3 text-[#8060a3]" /><p className="text-sm font-semibold text-[#6d6474]">Your shared ideas will appear here</p><p className="mt-1 text-xs text-[#aaa09c]">Choose a tool, then draw or place a mark.</p></div></div>}
+        </div>
+        <aside className="rounded-2xl border border-[#ded7cf] bg-[#fbf8f2] p-4 shadow-[0_12px_30px_rgba(42,39,57,.06)]">
+          <div className="mb-4 flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#eee6f3] text-[#8060a3]"><Pencil size={14} /></span><div><p className="text-[12px] font-bold text-[#403a47]">Board tools</p><p className="text-[10px] text-[#928a91]">{items.length} shared marks</p></div></div>
+          <div className="grid grid-cols-2 gap-2">{([['select', 'Select'], ['sticky', 'Sticky'], ['text', 'Text'], ['rectangle', 'Box'], ['line', 'Line'], ['draw', 'Freehand']] as const).map(([nextTool, label]) => <button key={nextTool} data-testid={`button-whiteboard-${nextTool}`} onClick={() => onToolChange(nextTool)} className={`rounded-lg border px-2 py-2.5 text-[10px] font-bold transition ${tool === nextTool ? 'border-[#c3a9ce] bg-[#eee6f3] text-[#8060a3]' : 'border-[#e1d9d2] bg-white text-[#7e757d] hover:border-[#c3a9ce]'}`}>{label}</button>)}</div>
+          <div className="mt-4 space-y-2"><label className="block font-mono text-[9px] uppercase tracking-[.12em] text-[#928a91]" htmlFor="whiteboard-text">Note text</label><input id="whiteboard-text" aria-label="Whiteboard note text" value={text} onChange={(event) => onTextChange(event.target.value)} placeholder="For sticky or text" className="w-full rounded-lg border border-[#ddd4cc] bg-white px-3 py-2.5 text-[11px] text-[#5e5861] outline-none focus:border-[#8060a3]" /><label className="flex items-center justify-between rounded-lg border border-[#ddd4cc] bg-white px-3 py-2"><span className="font-mono text-[9px] uppercase tracking-[.12em] text-[#928a91]">Ink color</span><input aria-label="Whiteboard color" type="color" value={color} onChange={(event) => onColorChange(event.target.value)} className="h-7 w-9 cursor-pointer rounded border-0 bg-transparent p-0" /></label></div>
+          <p className="mt-5 border-t border-[#e6ded6] pt-4 text-[10px] leading-5 text-[#928a91]">Double-click any mark to remove it. Drawing data is shared live with the room.</p>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function Editor({ page = 'builder' }: { page?: WorkspacePage }) {
   const [nodes, setNodes] = useState<PageNode[]>(seedNodes);
   const [events, setEvents] = useState<ActivityEvent[]>(seedEvents);
   const [collaborators, setCollaborators] = useState<Collaborator[]>([localCollaborator]);
@@ -398,7 +592,8 @@ function Editor() {
   const [blockedNotice, setBlockedNotice] = useState('');
   const [isSimulating, setIsSimulating] = useState(false);
   const [simStatus, setSimStatus] = useState('Ready to simulate');
-  const [activeTab, setActiveTab] = useState<'design' | 'layers' | 'activity' | 'collab' | 'code'>('design');
+  const [activeTab, setActiveTab] = useState<'design' | 'layers' | 'activity' | 'collab' | 'changes' | 'code'>('design');
+  const [changeHistory, setChangeHistory] = useState<ChangeRecord[]>([]);
   const [codeTab, setCodeTab] = useState<'html' | 'css' | 'js'>('html');
   const [copied, setCopied] = useState(false);
   const [zoom, setZoom] = useState(100);
@@ -413,18 +608,24 @@ function Editor() {
   const [chatDraft, setChatDraft] = useState('');
   const [whiteboardItems, setWhiteboardItems] = useState<WhiteboardItem[]>([]);
   const [whiteboardTool, setWhiteboardTool] = useState<WhiteboardItem['kind'] | 'select'>('sticky');
-  const [whiteboardColor, setWhiteboardColor] = useState('#e1844c');
+  const [whiteboardColor, setWhiteboardColor] = useState('#ef694e');
   const [whiteboardText, setWhiteboardText] = useState('');
   const [whiteboardDraftPoints, setWhiteboardDraftPoints] = useState<Array<{ x: number; y: number }>>([]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const { user } = useUser();
+  const [, setLocation] = useLocation();
   const socketRef = useRef<WebSocket | null>(null);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const dragRef = useRef<{ id: string; pointerId: number; breakpoint: Breakpoint; canvasWidth: number; startX: number; startY: number; nodeX: number; nodeY: number; lastX: number; lastY: number; lastSentAt: number } | null>(null);
+  const dragRef = useRef<{ id: string; pointerId: number; breakpoint: Breakpoint; canvasWidth: number; startX: number; startY: number; nodeX: number; nodeY: number; width: number; lastX: number; lastY: number; lastSentAt: number } | null>(null);
   const dragNodeElements = useRef(new Map<string, HTMLDivElement>());
   const cursorTimer = useRef<number | null>(null);
   const whiteboardRef = useRef<HTMLDivElement | null>(null);
   const whiteboardDragRef = useRef<{ pointerId: number; start: { x: number; y: number }; points: Array<{ x: number; y: number }> } | null>(null);
+  const measurementXRef = useRef<HTMLDivElement | null>(null);
+  const measurementYRef = useRef<HTMLDivElement | null>(null);
+  const measurementAlignXRef = useRef<HTMLDivElement | null>(null);
+  const measurementAlignYRef = useRef<HTMLDivElement | null>(null);
+  const measurementLabelRef = useRef<HTMLDivElement | null>(null);
   const operationClock = useRef(0);
   const operationSession = useRef(`tab-${Math.random().toString(36).slice(2)}`);
 
@@ -434,7 +635,7 @@ function Editor() {
     id: signedInId,
     name: signedInName,
     initials: initials(signedInName),
-    accent: '#177461',
+    accent: '#ef694e',
     status: 'editing',
   };
   const actorId = clientId || signedInId;
@@ -447,8 +648,40 @@ function Editor() {
   const activeLocks = nodes.filter((node) => node.lockedBy);
   const recentlyResolved = events.some((event) => event.outcome === 'resolved');
   const visibleEvents = useMemo(() => events.slice(0, 10), [events]);
+  const changedNodeIds = useMemo(() => new Set(changeHistory.slice(0, 8).map((change) => change.nodeId)), [changeHistory]);
+  const selectedLatestMove = useMemo(
+    () => changeHistory.find((change) => change.nodeId === selectedId && change.kind === 'move' && change.current.geometry.breakpoint === activeBreakpoint),
+    [activeBreakpoint, changeHistory, selectedId],
+  );
   const generated = useMemo(() => generateDocument(nodes, theme), [nodes, theme]);
   const codeValue = generated[codeTab];
+  const updateMeasurementOverlay = useCallback((x: number, y: number, width: number, alignedX = false, alignedY = false) => {
+    const setPosition = (element: HTMLDivElement | null, styles: Partial<CSSStyleDeclaration>) => {
+      if (!element) return;
+      Object.assign(element.style, styles);
+      element.style.display = showGuides && !isPreview ? 'block' : 'none';
+    };
+    setPosition(measurementXRef.current, { left: `${x}px` });
+    setPosition(measurementYRef.current, { top: `${y}px`, width: `${width}px` });
+    setPosition(measurementAlignXRef.current, { left: `${x + width / 2}px` });
+    setPosition(measurementAlignYRef.current, { top: `${y + estimatedNodeHeight(selectedNode)}px` });
+    if (measurementLabelRef.current) {
+      measurementLabelRef.current.textContent = `${Math.round(x)} × ${Math.round(y)}  ·  ${Math.round(width)}w  ·  right ${Math.round(canvasWidth - x - width)}`;
+      measurementLabelRef.current.style.left = `${Math.max(8, Math.min(canvasWidth - 185, x + 5))}px`;
+      measurementLabelRef.current.style.top = `${Math.max(82, y - 21)}px`;
+      measurementLabelRef.current.style.display = showGuides && !isPreview ? 'block' : 'none';
+      measurementLabelRef.current.dataset.aligned = alignedX || alignedY ? 'aligned' : '';
+    }
+    if (measurementAlignXRef.current) measurementAlignXRef.current.style.opacity = alignedX ? '1' : '0';
+    if (measurementAlignYRef.current) measurementAlignYRef.current.style.opacity = alignedY ? '1' : '0';
+  }, [canvasWidth, isPreview, selectedNode, showGuides]);
+
+  useEffect(() => {
+    if (selectedNode) {
+      const snapped = getSnappedGeometry(nodes, selectedNode.id, activeBreakpoint, canvasWidth, selectedGeometry.x, selectedGeometry.y, selectedGeometry.width);
+      updateMeasurementOverlay(selectedGeometry.x, selectedGeometry.y, selectedGeometry.width, snapped.alignedX, snapped.alignedY);
+    }
+  }, [activeBreakpoint, canvasWidth, nodes, selectedGeometry.width, selectedGeometry.x, selectedGeometry.y, selectedNode, updateMeasurementOverlay]);
 
   const addEvent = useCallback((event: Omit<ActivityEvent, 'id' | 'timestamp'>) => {
     setEvents((current) => [{ ...event, id: `local-${Date.now()}-${current.length}`, timestamp: formatTime() }, ...current].slice(0, 12));
@@ -682,10 +915,18 @@ function Editor() {
       element.style.left = `${x}px`;
       element.style.top = `${y}px`;
     }
+    const snapped = getSnappedGeometry(nodes, node.id, drag.breakpoint, drag.canvasWidth, x, y, getNodeGeometry(node, drag.breakpoint, nodes.indexOf(node), drag.canvasWidth).width);
+    drag.lastX = snapped.x;
+    drag.lastY = snapped.y;
+    if (element) {
+      element.style.left = `${snapped.x}px`;
+      element.style.top = `${snapped.y}px`;
+    }
+    updateMeasurementOverlay(snapped.x, snapped.y, getNodeGeometry(node, drag.breakpoint, nodes.indexOf(node), drag.canvasWidth).width, snapped.alignedX, snapped.alignedY);
     const now = performance.now();
     if (now - drag.lastSentAt >= 50) {
       drag.lastSentAt = now;
-      sendMessage({ type: 'move', nodeId: node.id, x, y, width: getNodeGeometry(node, drag.breakpoint, nodes.indexOf(node), drag.canvasWidth).width, breakpoint: drag.breakpoint }, { quiet: true });
+      sendMessage({ type: 'move', nodeId: node.id, x: snapped.x, y: snapped.y, width: getNodeGeometry(node, drag.breakpoint, nodes.indexOf(node), drag.canvasWidth).width, breakpoint: drag.breakpoint }, { quiet: true });
     }
   };
 
@@ -832,12 +1073,12 @@ function Editor() {
   const connectionColor = connection === 'live' ? '#2e9a7e' : connection === 'blocked' ? '#cf743f' : '#9b7a5c';
 
   return (
-    <main className="min-h-[100dvh] bg-[#e7edf2] font-sans text-[#202b32]">
+     <main className="wc-editor min-h-[100dvh] bg-[#e7edf2] font-sans text-[#202b32]">
       <header className="flex min-h-[72px] flex-wrap items-center justify-between gap-3 border-b border-[#cdd8de] bg-[#fbfcfc] px-4 py-3 shadow-[0_1px_0_rgba(40,57,67,.04)] md:px-6">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-[#173e3b] text-[#c6eee5] shadow-[0_5px_12px_rgba(23,62,59,.2)]"><WandSparkles size={18} strokeWidth={1.8} /></div>
+           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[13px] bg-[#292638] text-[#f7c2ad] shadow-[0_5px_12px_rgba(41,38,56,.25)]"><WandSparkles size={18} strokeWidth={1.8} /></div>
           <div className="min-w-0">
-            <div className="flex items-center gap-2"><h1 className="truncate text-[15px] font-bold tracking-[-.03em] text-[#1f3034]">Northstar Studio</h1><span className="hidden rounded-full bg-[#e4f2ee] px-2 py-0.5 font-mono text-[9px] font-medium uppercase tracking-[.12em] text-[#177461] sm:inline">Shared workspace</span></div>
+             <div className="flex items-center gap-2"><h1 className="truncate text-[15px] font-bold tracking-[-.03em] text-[#1f3034]">WebCraft Studio</h1><span className="hidden rounded-full bg-[#fae5dc] px-2 py-0.5 font-mono text-[9px] font-medium uppercase tracking-[.12em] text-[#c9523e] sm:inline">Shared workspace</span></div>
             <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-[#73818a]"><Globe2 size={11} /> Home page <ChevronDown size={12} /></div>
           </div>
         </div>
@@ -848,11 +1089,15 @@ function Editor() {
           <button data-testid="button-publish" onClick={publishPage} className="flex h-9 items-center gap-2 rounded-lg bg-[#e1844c] px-3.5 text-[11px] font-bold text-[#2b1d18] transition hover:-translate-y-0.5 hover:bg-[#ee9661]"><ArrowUpRight size={14} /> {published ? 'Published' : 'Publish'}</button>
           <button data-testid="button-reset-editor" onClick={resetEditor} className="flex h-9 w-9 items-center justify-center rounded-lg border border-[#d3dde1] bg-white text-[#71828a] transition hover:border-[#cf743f]/50 hover:text-[#cf743f]" aria-label="Reset editor"><RefreshCcw size={14} /></button>
         </div>
-      </header>
+       </header>
+       <nav className="wc-workspace-nav flex items-center gap-1 overflow-x-auto border-b border-[#d8d0c8] bg-[#f7f1e8] px-3 py-2 sm:px-5" aria-label="Workspace sections">
+         {([['builder', 'Builder', LayoutTemplate], ['whiteboard', 'Whiteboard', Pencil], ['chat', 'Chat', MessageCircle]] as const).map(([nextPage, label, Icon]) => <button key={nextPage} data-testid={`button-page-${nextPage}`} onClick={() => setLocation(nextPage === 'builder' ? '/editor' : `/${nextPage}`)} className={`flex min-h-9 shrink-0 items-center gap-2 rounded-lg px-3 text-[10px] font-bold transition ${page === nextPage ? 'bg-[#292638] text-[#fbf8f2] shadow-sm' : 'text-[#746e78] hover:bg-white hover:text-[#292638]'}`}><Icon size={13} />{label}</button>)}
+         <span className="ml-auto hidden items-center gap-2 px-3 font-mono text-[9px] uppercase tracking-[.12em] text-[#9a9296] sm:flex"><span className="h-1.5 w-1.5 rounded-full bg-[#ef694e]" /> Shared workspace</span>
+       </nav>
 
-      <div className="grid min-h-[calc(100dvh-72px)] grid-cols-1 xl:grid-cols-[238px_minmax(520px,1fr)_344px]">
+       {page === 'builder' && <div className="grid min-h-[calc(100dvh-114px)] grid-cols-1 xl:grid-cols-[238px_minmax(520px,1fr)_344px]">
         <aside className="builder-scrollbar border-b border-[#cdd8de] bg-[#f8fafb] p-4 lg:border-r lg:border-b-0">
-          <div className="mb-5 flex items-center justify-between"><div><p className="font-mono text-[10px] font-medium uppercase tracking-[.18em] text-[#6f8089]">Insert</p><h2 className="mt-1 text-[15px] font-bold tracking-[-.03em] text-[#26373c]">Build your page</h2></div><button data-testid="button-help" className="flex h-7 w-7 items-center justify-center rounded-full text-[#8b9aa1] transition hover:bg-[#e8eff1] hover:text-[#177461]" aria-label="Builder help"><CircleHelp size={15} /></button></div>
+           <div className="mb-5 flex items-center justify-between"><div><p className="font-mono text-[10px] font-medium uppercase tracking-[.18em] text-[#6f8089]">Insert</p><h2 className="mt-1 text-[15px] font-bold tracking-[-.03em] text-[#26373c]">Build your page</h2></div><button data-testid="button-help" onClick={() => { setActiveTab('activity'); addEvent({ actor: actor.name, action: 'opened', target: 'Builder help', detail: 'Opened the protocol stream for a quick orientation', outcome: 'observed' }); }} className="flex h-8 w-8 items-center justify-center rounded-full text-[#8b9aa1] transition hover:bg-[#fae5dc] hover:text-[#c9523e]" aria-label="Builder help"><CircleHelp size={15} /></button></div>
           <div className="mb-6 grid grid-cols-2 gap-2">{blockOptions.map((block) => { const Icon = block.icon; return <button key={block.type} data-testid={`button-add-${block.type.toLowerCase()}`} onClick={() => addNode(block.type)} className="group rounded-xl border border-[#dce4e7] bg-white p-3 text-left transition hover:-translate-y-0.5 hover:border-[#accbc3] hover:shadow-[0_8px_18px_rgba(43,70,74,.09)]"><span className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg" style={{ backgroundColor: `${block.tint}16`, color: block.tint }}><Icon size={16} strokeWidth={1.8} /></span><span className="block text-[12px] font-bold text-[#33454b]">{block.label}</span><span className="mt-1 block text-[10px] leading-4 text-[#87959b]">{block.detail}</span></button>; })}</div>
           <div className="mb-4 flex items-center justify-between border-t border-[#dde5e7] pt-4"><div className="flex items-center gap-2"><Layers3 size={14} className="text-[#177461]" /><span className="font-mono text-[10px] font-medium uppercase tracking-[.16em] text-[#71818a]">Layers</span></div><span data-testid="text-node-count" className="rounded-full bg-[#e4ecef] px-2 py-0.5 font-mono text-[10px] text-[#70818a]">{nodes.length}</span></div>
           <div className="space-y-1.5">{nodes.map((node) => { const owner = collaborators.find((person) => person.id === node.lockedBy); const isSelected = node.id === selectedId; const meta = typeMeta[node.type]; return <button key={node.id} data-testid={`node-${node.id}`} onClick={() => selectNode(node)} className={`group flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left transition ${isSelected ? 'border-[#9bcabd] bg-[#e5f3ef] shadow-[inset_3px_0_0_#177461]' : 'border-transparent hover:border-[#d9e3e6] hover:bg-white'}`}><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md font-mono text-[9px] font-bold" style={{ color: meta.color, backgroundColor: meta.bg }}>{meta.short}</span><span className="min-w-0 flex-1"><span className={`block truncate text-[11px] font-semibold ${isSelected ? 'text-[#177461]' : 'text-[#405159]'}`}>{node.label}</span><span className="mt-0.5 block truncate font-mono text-[9px] text-[#95a2a7]">/{node.type.toLowerCase()}</span></span>{owner && <Lock size={12} style={{ color: owner.accent }} />}</button>; })}</div>
@@ -865,14 +1110,14 @@ function Editor() {
             <div className="mb-5 flex flex-wrap items-end justify-between gap-4"><div><div className="mb-2 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[.18em] text-[#819099]"><span className="text-[#177461]">Canvas</span><span className="text-[#a9b4b8]">/</span><span>Home page</span></div><h2 className="text-[26px] font-bold tracking-[-.06em] text-[#24363a] md:text-[32px]">Shape the story.</h2><p className="mt-1 text-[12px] text-[#73838a]">{isPreview ? 'Previewing the live page.' : 'Drag any block to reposition it in the shared page frame.'}</p></div><div className="flex items-center gap-2 rounded-xl border border-[#d4dee1] bg-[#f8faf9] p-1">{collaborators.slice(0, 4).map((person, index) => <div key={`${person.id}-${index}`} data-testid={`presence-${person.id}-${index}`} className="flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-[10px] font-semibold text-[#33484e]" title={`${person.name} · ${person.status}`}><span className="flex h-5 w-5 items-center justify-center rounded-full font-mono text-[8px] font-bold" style={{ backgroundColor: `${person.accent}19`, color: person.accent }}>{person.initials || initials(person.name)}</span>{person.id === actorId ? 'You' : person.name.split(' ')[0]}</div>)}</div></div>
             {blockedNotice && <div data-testid="status-blocked" className="blocked-banner mb-4 flex items-center justify-between gap-3 rounded-xl border border-[#e7c5a8] bg-[#fff3e8] px-3.5 py-3 text-[11px] text-[#805235]"><span className="flex items-center gap-2"><Lock size={13} />{blockedNotice}</span><button data-testid="button-dismiss-blocked" onClick={() => setBlockedNotice('')} className="rounded p-1 text-[#b96a39] hover:bg-[#f8dfca]" aria-label="Dismiss blocked write"><X size={13} /></button></div>}
             <div className="soft-shadow overflow-hidden rounded-2xl border border-[#c6d3d7] bg-[#fbfcfb]">
-               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#dce3e3] bg-[#f8faf9] px-4 py-3"><div className="flex items-center gap-2.5"><div className="flex gap-1.5"><span className="h-2 w-2 rounded-full bg-[#e1844c]" /><span className="h-2 w-2 rounded-full bg-[#e9be61]" /><span className="h-2 w-2 rounded-full bg-[#61a892]" /></div><span className="ml-1 font-mono text-[10px] text-[#819096]">northstar.local / {isPreview ? 'preview' : 'shared canvas'}</span></div><div className="flex items-center gap-3"><div className="flex items-center gap-1.5 font-mono text-[9px]" style={{ color: connectionColor }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: connectionColor }} /> {connectionLabel}</div><div className="flex items-center gap-1 rounded-md border border-[#d6e0e1] bg-white px-1.5 py-1"><button data-testid="button-zoom-out" onClick={() => setZoom((value) => Math.max(80, value - 10))} className="px-1 text-[#708087] hover:text-[#177461]" aria-label="Zoom out">−</button><span data-testid="status-zoom" className="min-w-[32px] text-center font-mono text-[9px] text-[#6d7b81]">{zoom}%</span><button data-testid="button-zoom-in" onClick={() => setZoom((value) => Math.min(120, value + 10))} className="px-1 text-[#708087] hover:text-[#177461]" aria-label="Zoom in">+</button></div></div></div>
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#dce3e3] bg-[#f8faf9] px-4 py-3"><div className="flex items-center gap-2.5"><div className="flex gap-1.5"><span className="h-2 w-2 rounded-full bg-[#ef694e]" /><span className="h-2 w-2 rounded-full bg-[#e9be61]" /><span className="h-2 w-2 rounded-full bg-[#61a892]" /></div><span className="ml-1 font-mono text-[10px] text-[#819096]">webcraft.local / {isPreview ? 'preview' : 'shared canvas'}</span></div><div className="flex items-center gap-3"><div className="flex items-center gap-1.5 font-mono text-[9px]" style={{ color: connectionColor }}><span className="h-1.5 w-1.5 rounded-full" style={{ background: connectionColor }} /> {connectionLabel}</div><div className="flex items-center gap-1 rounded-md border border-[#d6e0e1] bg-white px-1.5 py-1"><button data-testid="button-zoom-out" onClick={() => setZoom((value) => Math.max(80, value - 10))} className="px-1 text-[#708087] hover:text-[#177461]" aria-label="Zoom out">−</button><span data-testid="status-zoom" className="min-w-[32px] text-center font-mono text-[9px] text-[#6d7b81]">{zoom}%</span><button data-testid="button-zoom-in" onClick={() => setZoom((value) => Math.min(120, value + 10))} className="px-1 text-[#708087] hover:text-[#177461]" aria-label="Zoom in">+</button></div></div></div>
                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#dce3e3] bg-[#f8faf9] px-4 py-2"><div className="flex items-center gap-2"><Ruler size={12} className="text-[#177461]" /><span className="font-mono text-[9px] uppercase tracking-[.14em] text-[#819096]">Viewport</span>{(['desktop', 'tablet', 'mobile'] as const).map((breakpoint) => <button key={breakpoint} data-testid={`button-breakpoint-${breakpoint}`} onClick={() => setActiveBreakpoint(breakpoint)} className={`rounded-md px-2 py-1 font-mono text-[9px] uppercase tracking-wider ${activeBreakpoint === breakpoint ? 'bg-[#dff0eb] text-[#177461]' : 'text-[#87969c] hover:bg-white'}`}>{breakpoint}</button>)}</div><button data-testid="button-toggle-guides" onClick={() => setShowGuides((value) => !value)} className={`flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[9px] ${showGuides ? 'bg-[#e9f3f1] text-[#177461]' : 'text-[#87969c]'}`}><Ruler size={11} /> {showGuides ? 'Guides on' : 'Guides off'}</button></div>
               <div className={`canvas-grid builder-scrollbar min-h-[520px] overflow-auto p-5 transition-opacity sm:p-10 ${isPreview ? 'cursor-default' : ''}`}>
                  <div className="mx-auto" style={{ width: canvasWidth * (zoom / 100), minHeight: 900 * (zoom / 100) }}>
                    <div ref={frameRef} className="page-frame" onPointerMove={handleCanvasPointerMove} style={{ width: canvasWidth, transform: `scale(${zoom / 100})`, transformOrigin: 'top left' }}>
-                    <div className="absolute left-0 right-0 top-0 flex h-[78px] items-center justify-between border-b border-[#ece8df] px-6 sm:px-9"><div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.16em] text-[#1e6157]"><span className="h-2 w-2 rounded-full bg-[#e1844c]" /> northstar</div><div className="hidden items-center gap-5 text-[10px] text-[#879390] sm:flex"><span>About</span><span>Work</span><span>Contact</span></div><button data-testid="button-canvas-menu" className="rounded-md border border-[#dfe5df] px-2 py-1 text-[10px] text-[#71817e] sm:hidden" aria-label="Open page menu"><PanelRight size={12} /></button></div>
+                     <div className="absolute left-0 right-0 top-0 flex h-[78px] items-center justify-between border-b border-[#ece8df] px-6 sm:px-9"><div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[.16em] text-[#292638]"><span className="h-2 w-2 rounded-full bg-[#ef694e]" /> webcraft</div><div className="hidden items-center gap-5 text-[10px] text-[#879390] sm:flex"><span>About</span><span>Work</span><span>Contact</span></div><button data-testid="button-canvas-menu" onClick={() => addEvent({ actor: actor.name, action: 'opened', target: 'Page menu', detail: 'Mobile page navigation is ready for authored links', outcome: 'observed' })} className="rounded-md border border-[#dfe5df] px-2 py-2 text-[10px] text-[#71817e] transition hover:border-[#ef694e] hover:text-[#c9523e] sm:hidden" aria-label="Open page menu"><PanelRight size={12} /></button></div>
                      {nodes.filter((node) => node.type !== 'PAGE').map((node) => { const isSelected = node.id === selectedId; const owner = collaborators.find((person) => person.id === node.lockedBy); const lastEditor = collaborators.find((person) => person.id === node.lastEditedBy); const geometry = getNodeGeometry(node, activeBreakpoint, nodes.indexOf(node), canvasWidth); return <div key={node.id} ref={(element) => { if (element) dragNodeElements.current.set(node.id, element); else dragNodeElements.current.delete(node.id); }} data-testid={`canvas-node-${node.id}`} role="button" tabIndex={0} onClick={() => !isPreview && selectNode(node)} onKeyDown={(event) => { if (event.key === 'Enter') selectNode(node); }} onPointerDown={(event) => handleNodePointerDown(event, node)} onPointerMove={(event) => handleNodePointerMove(event, node)} onPointerUp={handleNodePointerUp} onPointerCancel={handleNodePointerUp} className={`page-node group absolute rounded-xl border-2 p-4 outline-none ${isSelected && !isPreview ? 'selection-ring border-[#258b79] bg-[#f0faf6]' : 'border-transparent hover:border-[#cbded8] hover:bg-[#fbfdf9]'} ${draggingId === node.id ? 'is-dragging' : ''}`} style={{ left: geometry.x, top: geometry.y, width: geometry.width, minHeight: node.type === 'HEADING' ? 100 : undefined }}>{renderCanvasNode(node)}<div className="pointer-events-none absolute -top-3 left-3 z-10 hidden items-center gap-1.5 rounded-md bg-[#177461] px-2 py-1 font-mono text-[9px] font-medium text-white shadow-sm group-hover:flex"><MousePointer2 size={10} /> {node.label}<span className="ml-1 opacity-70">· {node.type.toLowerCase()}</span></div>{!isPreview && owner && <div className="pointer-events-none absolute -right-2 -top-3 z-10 flex items-center gap-1.5 rounded-full border border-white bg-white px-2 py-1 font-mono text-[9px] shadow-sm" style={{ color: owner.accent }}><Lock size={10} /> {owner.id === actorId ? 'your lease' : owner.name}</div>}{isSelected && !isPreview && <div className="pointer-events-none mt-3 flex items-center gap-2 border-t border-[#d6e9e3] pt-2 font-mono text-[9px] text-[#78928c]"><span className="flex items-center gap-1 text-[#177461]"><Save size={10} /> selected</span><span>·</span><span>{lastEditor?.name ?? 'Local writer'} last edited</span></div>}</div>; })}
-                     {showGuides && !isPreview && selectedNode && <><div className="pointer-events-none absolute border-l border-dashed border-[#54a794]" style={{ left: selectedGeometry.x, top: 78, bottom: 52 }} /><div className="pointer-events-none absolute border-t border-dashed border-[#54a794]" style={{ left: 20, top: selectedGeometry.y, width: selectedGeometry.width }} /><div className="pointer-events-none absolute z-20 rounded bg-[#e3f3ee] px-1.5 py-1 font-mono text-[8px] text-[#177461]" style={{ left: selectedGeometry.x + 5, top: Math.max(80, selectedGeometry.y - 18) }}>{Math.round(selectedGeometry.x)} × {Math.round(selectedGeometry.y)} · {Math.round(selectedGeometry.width)}w</div></>}
+                     {selectedNode && <><div ref={measurementXRef} className="pointer-events-none absolute z-10 border-l border-dashed border-[#ef694e]" style={{ left: selectedGeometry.x, top: 78, bottom: 52 }} /><div ref={measurementYRef} className="pointer-events-none absolute z-10 border-t border-dashed border-[#ef694e]" style={{ left: 20, top: selectedGeometry.y, width: selectedGeometry.width }} /><div ref={measurementAlignXRef} className="pointer-events-none absolute z-10 bottom-[52px] top-[78px] border-l border-dotted border-[#8060a3] opacity-0 transition-opacity" style={{ left: selectedGeometry.x + selectedGeometry.width / 2 }} /><div ref={measurementAlignYRef} className="pointer-events-none absolute left-5 right-5 border-t border-dotted border-[#8060a3] opacity-0 transition-opacity" style={{ top: selectedGeometry.y + estimatedNodeHeight(selectedNode) }} /><div ref={measurementLabelRef} className="pointer-events-none absolute z-20 rounded-md bg-[#292638] px-2 py-1 font-mono text-[8px] text-[#fbf8f2]" style={{ left: selectedGeometry.x + 5, top: Math.max(80, selectedGeometry.y - 18) }}>{Math.round(selectedGeometry.x)} × {Math.round(selectedGeometry.y)} · {Math.round(selectedGeometry.width)}w</div></>}
                     {collaborators.filter((person) => person.id !== actorId && person.cursor).map((person, index) => <div key={`cursor-${person.id}-${index}`} className="presence-cursor" style={{ left: person.cursor?.x, top: person.cursor?.y, color: person.accent }}><MousePointer2 size={16} fill="currentColor" /><span className="ml-2 rounded-full px-1.5 py-1 font-mono text-[8px] text-white" style={{ background: person.accent }}>{person.name}</span></div>)}
                     <div className="absolute bottom-0 left-0 right-0 border-t border-[#ece8df] px-6 py-4 text-[9px] uppercase tracking-[.16em] text-[#a0aaa4] sm:px-9">Made together, one visible decision at a time.</div>
                   </div>
@@ -885,7 +1130,7 @@ function Editor() {
         </section>
 
         <aside className="builder-scrollbar max-h-[none] overflow-y-auto bg-[#f8fafb] p-4 md:p-5 xl:max-h-[calc(100dvh-72px)]">
-          <div className="mb-5 flex items-center justify-between"><div><p className="font-mono text-[10px] font-medium uppercase tracking-[.18em] text-[#70818a]">Workspace panel</p><h2 className="mt-1 text-[15px] font-bold tracking-[-.03em] text-[#26373c]">Inspector</h2></div><button data-testid="button-panel-settings" className="flex h-7 w-7 items-center justify-center rounded-md text-[#87969c] transition hover:bg-[#e8eff1] hover:text-[#177461]" aria-label="Inspector settings"><Settings2 size={14} /></button></div>
+           <div className="mb-5 flex items-center justify-between"><div><p className="font-mono text-[10px] font-medium uppercase tracking-[.18em] text-[#70818a]">Workspace panel</p><h2 className="mt-1 text-[15px] font-bold tracking-[-.03em] text-[#26373c]">Inspector</h2></div><button data-testid="button-panel-settings" onClick={() => { setActiveTab('design'); addEvent({ actor: actor.name, action: 'focused', target: 'Inspector', detail: 'Returned to design controls', outcome: 'observed' }); }} className="flex h-8 w-8 items-center justify-center rounded-md text-[#87969c] transition hover:bg-[#fae5dc] hover:text-[#c9523e]" aria-label="Inspector settings"><Settings2 size={14} /></button></div>
           <div className="mb-5 grid grid-cols-5 rounded-lg border border-[#d7e0e3] bg-[#eef3f4] p-1">{([['design', 'Design', Settings2], ['layers', 'Layers', Layers3], ['activity', 'Activity', Activity], ['collab', 'Live', MessageCircle], ['code', 'Code', Code2]] as const).map(([tab, label, Icon]) => <button key={tab} data-testid={`button-tab-${tab}`} onClick={() => setActiveTab(tab)} className={`flex items-center justify-center gap-1 rounded-md py-2 text-[10px] font-bold transition ${activeTab === tab ? 'bg-white text-[#177461] shadow-sm' : 'text-[#819097] hover:text-[#496169]'}`}><Icon size={12} />{label}</button>)}</div>
 
           {activeTab === 'design' && <div className="space-y-4"><div className="rounded-xl border border-[#d7e1e3] bg-white p-4"><div className="mb-4 flex items-center justify-between"><div className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-lg" style={{ color: typeMeta[selectedNode.type].color, backgroundColor: typeMeta[selectedNode.type].bg }}><Type size={14} /></span><div><p data-testid="text-selected-node" className="text-[12px] font-bold text-[#34484e]">{selectedNode.label}</p><p className="font-mono text-[9px] uppercase tracking-[.12em] text-[#91a0a5]">{selectedNode.type} node</p></div></div><span className={`flex items-center gap-1 rounded-full px-2 py-1 font-mono text-[9px] ${selectedNode.lockedBy ? 'bg-[#f8e8da] text-[#b8653a]' : 'bg-[#e4f2ed] text-[#237a67]'}`}>{selectedNode.lockedBy ? <Lock size={10} /> : <Unlock size={10} />}{selectedNode.lockedBy ? 'leased' : 'open'}</span></div><label className="mb-1.5 block font-mono text-[9px] uppercase tracking-[.14em] text-[#849399]" htmlFor="node-label">Layer name</label><input id="node-label" data-testid="input-node-label" value={selectedNode.label} onChange={(event) => updateNode('label', event.target.value)} onBlur={() => commitEdit('layer name')} disabled={!canEdit} className="w-full rounded-lg border border-[#d8e1e3] bg-[#f8fafb] px-3 py-2.5 text-[12px] font-semibold text-[#3d5157] outline-none transition placeholder:text-[#a5afb2] focus:border-[#65a998] disabled:cursor-not-allowed disabled:opacity-50" /><label className="mb-1.5 mt-4 block font-mono text-[9px] uppercase tracking-[.14em] text-[#849399]" htmlFor="node-content">Content</label><textarea id="node-content" data-testid="input-node-content" value={selectedNode.content} onChange={(event) => updateNode('content', event.target.value)} onBlur={() => commitEdit('content')} disabled={!canEdit} rows={4} className="w-full resize-none rounded-lg border border-[#d8e1e3] bg-[#f8fafb] px-3 py-2.5 text-[12px] leading-5 text-[#52656b] outline-none transition focus:border-[#65a998] disabled:cursor-not-allowed disabled:opacity-50" /><button data-testid="button-toggle-lock" onClick={() => toggleLock(selectedNode)} className={`mt-3 flex w-full items-center justify-between rounded-lg border px-3 py-2.5 text-[11px] font-bold transition ${selectedNode.lockedBy === actorId ? 'border-[#9bcabd] bg-[#e3f3ee] text-[#177461]' : selectedNode.lockedBy ? 'border-[#e8c6a9] bg-[#fff2e7] text-[#b66438]' : 'border-[#d6e0e2] bg-[#f6f9f9] text-[#62767c] hover:border-[#91c5b7] hover:text-[#177461]'}`}><span className="flex items-center gap-2">{selectedNode.lockedBy ? <Lock size={13} /> : <Unlock size={13} />}{selectedNode.lockedBy === actorId ? 'Release your lease' : selectedNode.lockedBy ? `Leased by ${collaborators.find((person) => person.id === selectedNode.lockedBy)?.name ?? 'another writer'}` : 'Acquire edit lease'}</span><ArrowUpRight size={12} /></button><div className="mt-3 flex items-center justify-between font-mono text-[9px] text-[#8c9b9f]"><span>{canEdit ? 'writes allowed' : 'writes blocked by protocol'}</span><span>edited by {collaborators.find((person) => person.id === selectedNode.lastEditedBy)?.name ?? 'local writer'}</span></div></div><div className="rounded-xl border border-[#d7e1e3] bg-[#f2f7f6] p-4"><div className="mb-2 flex items-center gap-2 text-[#177461]"><Lock size={13} /><span className="text-[11px] font-bold">Lease protocol</span></div><p className="text-[10px] leading-4 text-[#70847f]">The active writer keeps the lease. A competing write is recorded, then deferred by the server.</p><div className="mt-3 flex items-center justify-between border-t border-[#dbe8e4] pt-3 font-mono text-[9px] text-[#7d918c]"><span>{activeLocks.length} active leases</span><span>revision {revision || 'local'}</span></div></div></div>}
@@ -930,9 +1175,11 @@ function Editor() {
 
           {activeTab === 'activity' && <div className="space-y-0"><div className="mb-4 flex items-center justify-between rounded-xl border border-[#d7e1e3] bg-white p-3.5"><div className="flex items-center gap-2"><Activity size={14} className="text-[#177461]" /><span className="text-[11px] font-bold text-[#41555b]">Protocol stream</span></div><span className={`h-2 w-2 rounded-full ${isSimulating ? 'animate-pulse bg-[#e1844c]' : 'bg-[#2e9a7e]'}`} /></div>{isSimulating && <div data-testid="status-simulation" className="mb-4 rounded-xl border border-[#e7c5a8] bg-[#fff3e8] p-3"><div className="mb-2 flex items-center justify-between"><span className="font-mono text-[9px] uppercase tracking-[.14em] text-[#b96a39]">Live resolution</span><span className="text-[9px] text-[#bf8258]">RUNNING</span></div><p className="text-[11px] font-semibold text-[#805235]">{simStatus}</p><div className="mt-3 h-1 overflow-hidden rounded-full bg-[#f1d7c2]"><div className="animate-pulse-line h-full w-full bg-[#e1844c]" /></div></div>}{visibleEvents.map((event, index) => <div key={event.id} data-testid={`activity-event-${event.id}`} className="animate-slide-in relative flex gap-3 border-l border-[#d5e0e2] pb-5 pl-5" style={{ animationDelay: `${index * 30}ms` }}><span className={`absolute -left-[5px] top-0 h-[9px] w-[9px] rounded-full border-2 border-[#f8fafb] ${event.outcome === 'resolved' ? 'bg-[#177461]' : event.outcome === 'blocked' ? 'bg-[#e1844c]' : event.outcome === 'observed' ? 'bg-[#8aa0a7]' : 'bg-[#4a9a86]'}`} /><div className="min-w-0 flex-1"><div className="flex items-baseline justify-between gap-2"><p className="text-[11px] font-bold text-[#53666c]">{event.action} <span className="font-normal text-[#7f9095]">{event.target}</span></p><time className="font-mono text-[8px] text-[#9aa7aa]">{event.timestamp}</time></div><p className="mt-1 text-[10px] leading-4 text-[#819196]"><span className="font-semibold text-[#61757b]">{event.actor}</span> · {event.detail}</p><span className={`mt-2 inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-mono text-[8px] uppercase tracking-wider ${event.outcome === 'resolved' ? 'bg-[#e0f2ed] text-[#177461]' : event.outcome === 'blocked' ? 'bg-[#fff0e3] text-[#b66438]' : event.outcome === 'observed' ? 'bg-[#e9eff1] text-[#73858b]' : 'bg-[#e4f1ed] text-[#2f806d]'}`}>{event.outcome === 'resolved' && <Check size={9} />}{event.outcome}</span></div></div>)}<div className="mt-1 rounded-xl border border-[#d7e1e3] bg-white p-4"><div className="mb-3 flex items-center gap-2"><Users size={14} className="text-[#8060a3]" /><span className="font-mono text-[9px] font-medium uppercase tracking-[.16em] text-[#71828a]">Presence</span></div>{collaborators.map((person, index) => <div key={`${person.id}-${index}`} className="mb-3 flex items-center gap-2.5 last:mb-0"><span className="flex h-7 w-7 items-center justify-center rounded-full font-mono text-[9px] font-bold" style={{ backgroundColor: `${person.accent}19`, color: person.accent }}>{person.initials || initials(person.name)}</span><span className="flex-1 text-[11px] font-semibold text-[#52656b]">{person.id === actorId ? `${person.name} (you)` : person.name}</span><span className="flex items-center gap-1.5 font-mono text-[8px] uppercase tracking-wider text-[#849499]"><span className="h-1.5 w-1.5 rounded-full" style={{ background: person.status === 'editing' ? person.accent : '#9aabad' }} />{person.status}</span></div>)}</div><p className="mt-4 flex items-center gap-2 font-mono text-[9px] text-[#849399]"><Link2 size={11} /> shared event log · {events.length} records</p></div>}
 
-           {activeTab === 'code' && <div className="space-y-3"><div className="rounded-xl border border-[#d7e1e3] bg-white p-3.5"><div className="mb-3 flex items-center justify-between"><div><div className="flex items-center gap-2"><Code2 size={14} className="text-[#177461]" /><span className="text-[11px] font-bold text-[#41555b]">Website source</span></div><p className="mt-1 text-[10px] leading-4 text-[#849196]">The actual authored page output — not the Northstar editor internals.</p></div><button data-testid="button-copy-code" onClick={copyCode} className="flex items-center gap-1.5 rounded-lg border border-[#d5e0e2] bg-[#f8fafb] px-2.5 py-2 text-[10px] font-bold text-[#5d7178] hover:border-[#91c5b7] hover:text-[#177461]">{copied ? <Check size={12} /> : <Copy size={12} />}{copied ? 'Copied' : 'Copy'}</button></div><div className="mb-3 grid grid-cols-3 rounded-lg border border-[#d7e0e3] bg-[#eef3f4] p-1">{([['html', 'index.html'], ['css', 'styles.css'], ['js', 'script.js']] as const).map(([tab, label]) => <button key={tab} data-testid={`button-code-${tab}`} onClick={() => setCodeTab(tab)} className={`rounded-md py-2 font-mono text-[10px] font-bold transition ${codeTab === tab ? 'bg-white text-[#177461] shadow-sm' : 'text-[#819097] hover:text-[#496169]'}`}>{label}</button>)}</div><div className="mb-2 flex items-center justify-between font-mono text-[9px] text-[#8a999e]"><span>website/{codeTab === 'html' ? 'index.html' : codeTab === 'css' ? 'styles.css' : 'script.js'}</span><span>{codeValue.split('\\n').length} lines · {nodes.length} shared nodes</span></div><div className="code-scroll rounded-lg border border-[#243e40] bg-[#183437] p-3"><pre data-testid={`code-output-${codeTab}`} className="font-mono text-[10px] leading-[1.65] text-[#cce8de]">{codeValue}</pre></div></div><div className="rounded-xl border border-[#d7e5e1] bg-[#edf7f4] p-3.5"><div className="flex items-center gap-2 text-[#177461]"><Clipboard size={13} /><span className="text-[11px] font-bold">Website export</span></div><p className="mt-2 text-[10px] leading-4 text-[#648079]">These three files are generated from the shared DOM tree. HTML contains every block and data-node-id; CSS contains the page layout; JS contains the page behavior.</p><div className="mt-3 border-t border-[#d5e9e3] pt-3 font-mono text-[9px] text-[#78928c]">CRDT {crdtStatus.algorithm} · clock {crdtStatus.clock} · {crdtStatus.operations} merged operations</div></div></div>}
-        </aside>
-      </div>
+             {activeTab === 'code' && <div className="space-y-3"><div className="rounded-xl border border-[#d7e1e3] bg-white p-3.5"><div className="mb-3 flex items-center justify-between"><div><div className="flex items-center gap-2"><Code2 size={14} className="text-[#177461]" /><span className="text-[11px] font-bold text-[#41555b]">Website source</span></div><p className="mt-1 text-[10px] leading-4 text-[#849196]">The authored page output — separate from the WebCraft editor internals.</p></div><button data-testid="button-copy-code" onClick={copyCode} className="flex items-center gap-1.5 rounded-lg border border-[#d5e0e2] bg-[#f8fafb] px-2.5 py-2 text-[10px] font-bold text-[#5d7178] hover:border-[#91c5b7] hover:text-[#177461]">{copied ? <Check size={12} /> : <Copy size={12} />}{copied ? 'Copied' : 'Copy'}</button></div><div className="mb-3 grid grid-cols-3 rounded-lg border border-[#d7e0e3] bg-[#eef3f4] p-1">{([['html', 'index.html'], ['css', 'styles.css'], ['js', 'script.js']] as const).map(([tab, label]) => <button key={tab} data-testid={`button-code-${tab}`} onClick={() => setCodeTab(tab)} className={`rounded-md py-2 font-mono text-[10px] font-bold transition ${codeTab === tab ? 'bg-white text-[#177461] shadow-sm' : 'text-[#819097] hover:text-[#496169]'}`}>{label}</button>)}</div><div className="mb-2 flex items-center justify-between font-mono text-[9px] text-[#8a999e]"><span>website/{codeTab === 'html' ? 'index.html' : codeTab === 'css' ? 'styles.css' : 'script.js'}</span><span>{codeValue.split('\\n').length} lines · {nodes.length} shared nodes</span></div><div className="code-scroll rounded-lg border border-[#243e40] bg-[#183437] p-3"><pre data-testid={`code-output-${codeTab}`} className="font-mono text-[10px] leading-[1.65] text-[#cce8de]">{codeValue}</pre></div></div><div className="rounded-xl border border-[#d7e5e1] bg-[#edf7f4] p-3.5"><div className="flex items-center gap-2 text-[#177461]"><Clipboard size={13} /><span className="text-[11px] font-bold">Website export</span></div><p className="mt-2 text-[10px] leading-4 text-[#648079]">These three files are generated from the shared DOM tree. HTML contains every block and data-node-id; CSS contains the page layout; JS contains the page behavior.</p><div className="mt-3 border-t border-[#d5e9e3] pt-3 font-mono text-[9px] text-[#78928c]">CRDT {crdtStatus.algorithm} · clock {crdtStatus.clock} · {crdtStatus.operations} merged operations</div></div></div>}
+         </aside>
+       </div>}
+       {page === 'whiteboard' && <WhiteboardWorkspace items={whiteboardItems} draftPoints={whiteboardDraftPoints} tool={whiteboardTool} color={whiteboardColor} text={whiteboardText} surfaceRef={whiteboardRef} onToolChange={setWhiteboardTool} onColorChange={setWhiteboardColor} onTextChange={setWhiteboardText} onClear={clearWhiteboard} onRemove={(id) => { setWhiteboardItems((current) => current.filter((entry) => entry.id !== id)); sendMessage({ type: 'whiteboard-remove', whiteboardItemId: id }); }} onPointerDown={handleWhiteboardPointerDown} onPointerMove={handleWhiteboardPointerMove} onPointerUp={handleWhiteboardPointerUp} />}
+       {page === 'chat' && <ChatWorkspace messages={chatMessages} draft={chatDraft} actorId={actorId} onDraftChange={setChatDraft} onSend={sendChatMessage} />}
     </main>
   );
 }

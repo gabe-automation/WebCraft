@@ -1,6 +1,6 @@
 kind = "web"
 previewPath = "/"
-title = "Northstar Studio"
+title = "WebCraft"
 description = "A lightweight collaborative page authoring sandbox for testing selective node locking, concurrent edits, and deterministic layout conflict resolution."
 version = "1.0.0"
 id = "artifacts/conflict-free-editor"

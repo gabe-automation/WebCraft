@@ -1,4 +1,4 @@
-# Northstar Studio
+# WebCraft
 
 A real-time Wix-style visual page builder with movable HTML-like blocks, selective DOM-node locking, and a whole-document HTML/CSS/JS code view.
 
@@ -22,7 +22,7 @@ A real-time Wix-style visual page builder with movable HTML-like blocks, selecti
 
 ## Where things live
 
-- `artifacts/conflict-free-editor/src/pages/editor.tsx` — the authenticated visual builder, live presence layer, and complete website source view
+- `artifacts/conflict-free-editor/src/pages/editor.tsx` — the authenticated WebCraft shell, responsive visual builder, dedicated chat/whiteboard workspaces, live presence layer, and complete website source view
 - `artifacts/conflict-free-editor/src/index.css` — app theme and interaction animations
 - `artifacts/conflict-free-editor/src/App.tsx` — route and app shell entry point
 - `artifacts/api-server/src/collab.ts` — in-memory CRDT-backed page state and native WebSocket collaboration protocol
@@ -36,7 +36,9 @@ A real-time Wix-style visual page builder with movable HTML-like blocks, selecti
 - The code inspector generates the complete authored website as `index.html`, `styles.css`, and `script.js` from the shared node tree; editor internals are not included.
 - Cursor coordinates are ephemeral WebSocket presence messages and are rendered as labeled collaborator pointers over the page frame.
 - Chat messages and whiteboard marks use bounded realtime WebSocket broadcasts and are rehydrated from the room snapshot; they remain separate from authored website DOM state.
+- Builder, Whiteboard, and Chat are separate authenticated routes (`/editor`, `/whiteboard`, `/chat`) with shared workspace navigation.
 - Responsive geometry is stored per breakpoint in the same CRDT register model, while theme controls affect the generated website export without changing editor chrome.
+- Builder measurement guides snap to page bounds, sibling edges, centers, and spacing anchors without rebuilding the React tree during pointer movement.
 
 ## Product
 
@@ -50,6 +52,7 @@ A real-time Wix-style visual page builder with movable HTML-like blocks, selecti
 - Inspect and copy the full generated website HTML, CSS, or JavaScript document.
 - Insert navigation, hero, image, cards, pricing, testimonial, auth, dashboard, chat, footer, and divider components with responsive desktop/tablet/mobile geometry.
 - Collaborate in a realtime room chat and shared whiteboard with sticky, text, rectangle, line, and freehand tools.
+- The generated `script.js` includes authored-node selection, action feedback, form submission messaging, and chat message behavior; generated HTML/CSS retain the committed breakpoint geometry and theme.
 - Toggle measurement guides and adjust authored export colors through the theme direction controls.
 
 ## User preferences

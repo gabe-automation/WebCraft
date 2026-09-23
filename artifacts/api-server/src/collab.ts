@@ -102,7 +102,7 @@ const initialNodes: PageNode[] = [
     id: "root",
     type: "PAGE",
     label: "Home page",
-    content: "Northstar Studio",
+    content: "WebCraft Studio",
     lockedBy: null,
     position: 0,
     lastEditedBy: "seed",
@@ -445,7 +445,7 @@ function applyMessage(client: Client, message: ClientMessage) {
       REGISTER: { label: "Registration form", content: "Create your account", width: 360 },
       DASHBOARD: { label: "Dashboard shell", content: "Overview · Activity · Progress", width: 560 },
       CHAT: { label: "Chat panel", content: "Ask us anything", width: 360 },
-      FOOTER: { label: "Site footer", content: "Northstar · Privacy · Terms", width: 600 },
+      FOOTER: { label: "Site footer", content: "WebCraft · Privacy · Terms", width: 600 },
       DIVIDER: { label: "Section divider", content: "", width: 560 },
     };
     const preset = defaults[message.nodeType];
